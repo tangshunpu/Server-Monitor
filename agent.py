@@ -19,6 +19,7 @@ import platform
 import subprocess
 import argparse
 import logging
+import threading
 
 import psutil
 import requests
@@ -31,6 +32,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 GLOBAL_HTTP_PROXY = None
+NETWORK_HEALTH_LOCK = threading.Lock()
+NETWORK_HEALTH_CACHE = {
+    'network_cn_ok': None,
+    'network_cn_detail': 'pending',
+    'network_global_ok': None,
+    'network_global_detail': 'pending',
+}
+NETWORK_TEST_RETRY_SECONDS = 30
+NETWORK_TEST_SUCCESS_PAUSE_SECONDS = 300
+DEFAULT_GLOBAL_HTTP_PROXY = 'http://127.0.0.1:7890'
 
 
 # ---------------------------------------------------------------------------
@@ -318,35 +329,92 @@ def _check_network_connectivity():
         result['network_cn_ok'] = False
         result['network_cn_detail'] = 'curl timed out'
 
-    # Global check: curl google generate_204, optional proxy / 国际检测：curl google generate_204（可选代理）
-    global_cmd = [
-        'curl', '-L', '--max-time', '8', '-o', '/dev/null', '-sS',
-        '-w', '%{http_code}'
+    # Global check: try multiple sites directly; if all fail, retry via proxy.
+    # 国际检测：先直连多个站点；若都失败则自动走代理重试。
+    global_urls = [
+        'https://www.google.com/generate_204',
+        'https://www.cloudflare.com/cdn-cgi/trace',
+        'https://www.wikipedia.org',
     ]
-    if GLOBAL_HTTP_PROXY:
-        global_cmd.extend(['-x', GLOBAL_HTTP_PROXY])
-    global_cmd.append('https://www.google.com/generate_204')
 
-    try:
-        out = subprocess.run(global_cmd, capture_output=True, text=True, timeout=10)
-        http_code = (out.stdout or '').strip()
-        code_num = int(http_code) if http_code.isdigit() else None
-        # Prefer curl exit code; use HTTP code as auxiliary signal.
-        global_ok = (out.returncode == 0) and (code_num is None or code_num < 500)
-        result['network_global_ok'] = global_ok
-        if global_ok:
-            result['network_global_detail'] = f'HTTP {http_code or "N/A"}'
-        else:
+    def _run_global_round(proxy=None):
+        mode = f'proxy({proxy})' if proxy else 'direct'
+        last_err = ''
+        for url in global_urls:
+            cmd = [
+                'curl', '-L', '--max-time', '6', '-o', '/dev/null', '-sS',
+                '-w', '%{http_code}',
+            ]
+            if proxy:
+                cmd.extend(['-x', proxy])
+            cmd.append(url)
+            try:
+                out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            except FileNotFoundError:
+                return False, 'curl command not found'
+            except subprocess.TimeoutExpired:
+                last_err = f'{mode} {url}: curl timed out'
+                continue
+
+            http_code = (out.stdout or '').strip()
+            code_num = int(http_code) if http_code.isdigit() else None
+            ok = (out.returncode == 0) and (code_num is None or code_num < 500)
+            if ok:
+                return True, f'{mode} {url}: HTTP {http_code or "N/A"}'
             err = (out.stderr or '').strip()
-            result['network_global_detail'] = (err or f'curl exit {out.returncode}, HTTP {http_code or "N/A"}')[:160]
-    except FileNotFoundError:
-        result['network_global_ok'] = False
-        result['network_global_detail'] = 'curl command not found'
-    except subprocess.TimeoutExpired:
-        result['network_global_ok'] = False
-        result['network_global_detail'] = 'curl timed out'
+            fallback_err = f'curl exit {out.returncode}, HTTP {http_code or "N/A"}'
+            last_err = f'{mode} {url}: {(err or fallback_err)[:80]}'
+        return False, last_err or f'{mode}: all targets failed'
+
+    global_ok, global_detail = _run_global_round(proxy=None)
+    if not global_ok:
+        retry_proxy = (GLOBAL_HTTP_PROXY or DEFAULT_GLOBAL_HTTP_PROXY).strip()
+        proxy_ok, proxy_detail = _run_global_round(proxy=retry_proxy)
+        global_ok = proxy_ok
+        global_detail = proxy_detail if proxy_ok else f'{global_detail}; retry failed: {proxy_detail}'
+
+    result['network_global_ok'] = global_ok
+    result['network_global_detail'] = global_detail[:160]
 
     return result
+
+
+def _set_network_health_cache(net_health):
+    """Update shared network health cache.
+    更新共享网络连通性缓存。"""
+    with NETWORK_HEALTH_LOCK:
+        NETWORK_HEALTH_CACHE.update({
+            'network_cn_ok': net_health.get('network_cn_ok'),
+            'network_cn_detail': net_health.get('network_cn_detail', ''),
+            'network_global_ok': net_health.get('network_global_ok'),
+            'network_global_detail': net_health.get('network_global_detail', ''),
+        })
+
+
+def _get_network_health_cache():
+    """Read shared network health cache.
+    读取共享网络连通性缓存。"""
+    with NETWORK_HEALTH_LOCK:
+        return {
+            'network_cn_ok': NETWORK_HEALTH_CACHE.get('network_cn_ok'),
+            'network_cn_detail': NETWORK_HEALTH_CACHE.get('network_cn_detail', ''),
+            'network_global_ok': NETWORK_HEALTH_CACHE.get('network_global_ok'),
+            'network_global_detail': NETWORK_HEALTH_CACHE.get('network_global_detail', ''),
+        }
+
+
+def _network_test_worker(stop_event):
+    """Run network tests in background, independent from report loop.
+    在后台执行网络测试，与上报循环解耦。"""
+    while not stop_event.is_set():
+        net_health = _check_network_connectivity()
+        _set_network_health_cache(net_health)
+
+        both_ok = (net_health.get('network_cn_ok') is True
+                   and net_health.get('network_global_ok') is True)
+        sleep_seconds = (NETWORK_TEST_SUCCESS_PAUSE_SECONDS
+                         if both_ok else NETWORK_TEST_RETRY_SECONDS)
+        stop_event.wait(sleep_seconds)
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +528,7 @@ def collect_metrics():
 
     # Network / 网络
     net = psutil.net_io_counters()
-    net_health = _check_network_connectivity()
+    net_health = _get_network_health_cache()
 
     # GPU
     gpu_data, gpu_err = get_gpu_info()
@@ -533,27 +601,43 @@ def main():
     if GLOBAL_HTTP_PROXY:
         logger.info(f"Global connectivity check proxy enabled: {GLOBAL_HTTP_PROXY}")
 
-    while True:
-        try:
-            metrics = collect_metrics()
-            resp = requests.post(
-                f"{server_url}/api/report",
-                json=metrics,
-                headers={'Authorization': f'Bearer {token}'},
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                logger.info(f"Report OK (CPU: {metrics['cpu_percent']}%, "
-                            f"MEM: {metrics['memory_percent']}%, "
-                            f"GPUs: {len(metrics['gpu_data'])}) / 上报成功")
-            else:
-                logger.warning(f"Report failed / 上报失败: HTTP {resp.status_code} — {resp.text}")
-        except requests.ConnectionError:
-            logger.error(f"Cannot connect to {server_url} / 无法连接到 {server_url}")
-        except Exception as e:
-            logger.error(f"Report error / 上报异常: {e}")
+    network_stop_event = threading.Event()
+    network_worker = threading.Thread(
+        target=_network_test_worker,
+        args=(network_stop_event,),
+        daemon=True,
+    )
+    network_worker.start()
+    logger.info(
+        "Background network test started (retry: %ss, success pause: %ss)",
+        NETWORK_TEST_RETRY_SECONDS,
+        NETWORK_TEST_SUCCESS_PAUSE_SECONDS,
+    )
 
-        time.sleep(interval)
+    try:
+        while True:
+            try:
+                metrics = collect_metrics()
+                resp = requests.post(
+                    f"{server_url}/api/report",
+                    json=metrics,
+                    headers={'Authorization': f'Bearer {token}'},
+                    timeout=15,
+                )
+                if resp.status_code == 200:
+                    logger.info(f"Report OK (CPU: {metrics['cpu_percent']}%, "
+                                f"MEM: {metrics['memory_percent']}%, "
+                                f"GPUs: {len(metrics['gpu_data'])}) / 上报成功")
+                else:
+                    logger.warning(f"Report failed / 上报失败: HTTP {resp.status_code} — {resp.text}")
+            except requests.ConnectionError:
+                logger.error(f"Cannot connect to {server_url} / 无法连接到 {server_url}")
+            except Exception as e:
+                logger.error(f"Report error / 上报异常: {e}")
+
+            time.sleep(interval)
+    finally:
+        network_stop_event.set()
 
 
 if __name__ == '__main__':
