@@ -130,6 +130,58 @@ def get_gpu_info():
 
 
 # ---------------------------------------------------------------------------
+# Network helpers / 网络辅助
+# ---------------------------------------------------------------------------
+
+def _is_private_ip(addr):
+    """Check if an IP address is a private/internal address.
+    判断 IP 是否为内网地址。"""
+    parts = addr.split('.')
+    if len(parts) != 4:
+        return False
+    try:
+        a, b = int(parts[0]), int(parts[1])
+    except ValueError:
+        return False
+    # 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+    return (a == 10
+            or (a == 172 and 16 <= b <= 31)
+            or (a == 192 and b == 168))
+
+
+def _get_private_ip():
+    """Get the private/internal IP address of this machine.
+    获取本机内网 IP 地址。优先返回 10.x 开头的地址。"""
+    candidates = []
+    try:
+        # Collect all interface addresses / 收集所有网卡地址
+        for name, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                if addr.family == socket.AF_INET and addr.address != '127.0.0.1':
+                    if _is_private_ip(addr.address):
+                        candidates.append(addr.address)
+    except Exception:
+        pass
+
+    if candidates:
+        # Prefer 10.x addresses / 优先 10.x 地址
+        for c in candidates:
+            if c.startswith('10.'):
+                return c
+        return candidates[0]
+
+    # Fallback: use default route / 兜底：通过默认路由获取
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return 'unknown'
+
+
+# ---------------------------------------------------------------------------
 # System Metrics Collection / 系统指标采集
 # ---------------------------------------------------------------------------
 
@@ -156,15 +208,8 @@ def collect_metrics():
     # Operating system / 操作系统
     os_info = f"{platform.system()} {platform.release()}"
 
-    # Local IP / 本机 IP
-    ip = 'unknown'
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(('8.8.8.8', 80))
-        ip = s.getsockname()[0]
-        s.close()
-    except Exception:
-        pass
+    # Local IP (prefer private/internal address) / 本机 IP（优先内网地址）
+    ip = _get_private_ip()
 
     return {
         'hostname':       socket.gethostname(),
