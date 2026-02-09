@@ -995,7 +995,7 @@ function renderServerCard(server) {
                 </div>
             </div>
             ${currentUser.role === 'admin' ? `<div class="card-actions">
-                <button class="btn-icon" title="Delete server" onclick="openDeleteModal(${s.id}, '${s.hostname}')">&#x1F5D1;</button>
+                <button class="btn-icon" title="Delete server" onclick="openDeleteModal(${s.id}, '${(s.hostname || '').replace(/'/g, "\\'")}')">&#x1F5D1;</button>
             </div>` : ''}
         </div>
         ${metricsHTML}

@@ -245,6 +245,44 @@ def _get_private_ip():
         return 'unknown'
 
 
+def _normalize_mac(mac):
+    """Normalize MAC address string to aa:bb:cc:dd:ee:ff.
+    规范化 MAC 地址为 aa:bb:cc:dd:ee:ff。"""
+    if not mac:
+        return None
+    hex_digits = ''.join(ch for ch in str(mac) if ch.isalnum()).lower()
+    if len(hex_digits) != 12 or any(ch not in '0123456789abcdef' for ch in hex_digits):
+        return None
+    return ':'.join(hex_digits[i:i + 2] for i in range(0, 12, 2))
+
+
+def _get_primary_mac():
+    """Get primary MAC address from active non-loopback interfaces.
+    获取活跃非回环网卡的主 MAC 地址。"""
+    try:
+        stats = psutil.net_if_stats()
+        addrs = psutil.net_if_addrs()
+        af_link = getattr(psutil, 'AF_LINK', None)
+        candidates = []
+        for if_name, if_addrs in addrs.items():
+            iface_stat = stats.get(if_name)
+            if iface_stat and not iface_stat.isup:
+                continue
+            if if_name.lower().startswith(('lo', 'docker', 'veth', 'br-')):
+                continue
+            for addr in if_addrs:
+                if af_link is not None and addr.family == af_link:
+                    mac = _normalize_mac(addr.address)
+                    if mac and mac != '00:00:00:00:00:00':
+                        candidates.append((if_name, mac))
+        if candidates:
+            candidates.sort(key=lambda x: (0 if x[0].startswith(('eth', 'en')) else 1, x[0]))
+            return candidates[0][1]
+    except Exception:
+        pass
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Disk helpers (ZFS-aware) / 磁盘辅助（ZFS 感知）
 # ---------------------------------------------------------------------------
@@ -373,6 +411,7 @@ def collect_metrics():
 
     return {
         'hostname':       socket.gethostname(),
+        'mac_address':    _get_primary_mac(),
         'ip':             ip,
         'os_info':        os_info,
         'cpu_percent':    cpu_percent,

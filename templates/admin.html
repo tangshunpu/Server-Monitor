@@ -90,6 +90,7 @@
         .result-box .value { font-size:15px; font-weight:600; font-family:monospace; color:var(--orange); word-break:break-all; user-select:all; }
         .copy-btn { font-size:12px; color:var(--blue); cursor:pointer; margin-left:8px; }
         .copy-btn:hover { text-decoration:underline; }
+        .hostname-sub { font-size:12px; color:var(--text-secondary); margin-top:3px; }
     </style>
 </head>
 <body>
@@ -146,7 +147,7 @@
         </div>
         <div class="table-wrap">
             <table><thead><tr>
-                <th>Hostname</th><th>IP</th><th>Status</th><th>Note</th><th>Actions</th>
+                <th>Display Name</th><th>Identity</th><th>IP</th><th>Status</th><th>Note</th><th>Actions</th>
             </tr></thead><tbody id="serversBody"></tbody></table>
         </div>
     </div>
@@ -185,6 +186,22 @@
         <div class="modal-actions">
             <button class="btn" onclick="closeModal('serverStatusModal')">Cancel</button>
             <button class="btn btn-primary" onclick="submitServerStatus()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- Server Name Modal -->
+<div class="modal-overlay" id="serverNameModal">
+    <div class="modal">
+        <h3>Set Server Display Name</h3>
+        <p style="color:var(--text-secondary);font-size:14px;margin-bottom:16px" id="snHostname"></p>
+        <div class="form-group">
+            <label>Display Name (global for all users)</label>
+            <input type="text" id="snDisplayName" placeholder="Leave empty to use system hostname">
+        </div>
+        <div class="modal-actions">
+            <button class="btn" onclick="closeModal('serverNameModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="submitServerName()">Save</button>
         </div>
     </div>
 </div>
@@ -298,6 +315,7 @@
 let allServers = [];
 let editingUserId = null;
 let resetUserId = null;
+let namingServerId = null;
 
 // ---------------------------------------------------------------------------
 // Theme
@@ -607,23 +625,47 @@ function loadServers() {
         allServers = servers;
         document.getElementById('serverCountLabel').textContent = servers.length + ' server(s)';
         const tb = document.getElementById('serversBody');
-        if(servers.length===0) { tb.innerHTML='<tr><td colspan="5" class="empty-row">No servers</td></tr>'; return; }
+        if(servers.length===0) { tb.innerHTML='<tr><td colspan="6" class="empty-row">No servers</td></tr>'; return; }
         tb.innerHTML = servers.map(s => {
             const st = s.admin_status || 'normal';
             let badge;
             if(st==='maintenance') badge='<span class="badge" style="background:rgba(88,166,255,.12);color:var(--blue)">Maintenance</span>';
             else if(st==='fault') badge='<span class="badge" style="background:rgba(248,81,73,.15);color:var(--red)">Fault</span>';
             else badge='<span class="badge badge-yes">Normal</span>';
+            const nameHtml = `<div><strong>${s.hostname}</strong></div><div class="hostname-sub">system: ${s.raw_hostname}</div>`;
+            const identity = s.mac_address || 'legacy(no-mac)';
             return `<tr>
-                <td><strong>${s.hostname}</strong></td>
+                <td>${nameHtml}</td>
+                <td style="font-size:12px">${identity}</td>
                 <td style="font-size:12px">${s.ip||'-'}</td>
                 <td>${badge}</td>
                 <td style="font-size:12px;color:var(--text-muted);max-width:200px">${s.admin_status_note||'-'}</td>
                 <td class="actions">
-                    <button class="btn btn-sm" onclick="openServerStatus(${s.id},'${s.hostname}','${st}','${(s.admin_status_note||'').replace(/'/g,"\\'")}')">Set Status</button>
+                    <button class="btn btn-sm" onclick="openServerName(${s.id},'${(s.raw_hostname||'').replace(/'/g,"\\'")}','${(s.display_name||'').replace(/'/g,"\\'")}')">Set Name</button>
+                    <button class="btn btn-sm" onclick="openServerStatus(${s.id},'${(s.hostname||'').replace(/'/g,"\\'")}','${st}','${(s.admin_status_note||'').replace(/'/g,"\\'")}')">Set Status</button>
                 </td>
             </tr>`;
         }).join('');
+    });
+}
+
+function openServerName(id, rawHostname, displayName) {
+    namingServerId = id;
+    document.getElementById('snHostname').textContent = 'System hostname: ' + rawHostname;
+    document.getElementById('snDisplayName').value = displayName || '';
+    document.getElementById('serverNameModal').classList.add('active');
+}
+
+function submitServerName() {
+    const displayName = document.getElementById('snDisplayName').value.trim();
+    api('/api/admin/servers/'+namingServerId+'/name', {
+        method:'PUT', body:JSON.stringify({display_name: displayName})
+    }).then(r => {
+        if(r.error) { alert(r.error); return; }
+        closeModal('serverNameModal');
+        loadServers();
+        loadUsers();
+        loadInvites();
     });
 }
 

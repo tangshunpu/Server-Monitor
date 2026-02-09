@@ -161,6 +161,15 @@
         }
         .server-list { font-size: 13px; line-height: 1.8; color: var(--text-secondary); }
         .server-list strong { color: var(--text); }
+        .server-item {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 8px;
+            line-height: 1.5;
+        }
+        .server-meta { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
+        .server-actions { margin-top: 8px; display: flex; gap: 8px; }
         .mono {
             font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
             background: var(--bg-inner);
@@ -347,7 +356,38 @@ function loadMyServers() {
             el.innerHTML = '<span>No server visible yet.</span>';
             return;
         }
-        el.innerHTML = rows.map(s => `<div><strong>${s.hostname}</strong> - ${s.ip || 'Unknown IP'} - ${s.status}</div>`).join('');
+        el.innerHTML = rows.map(s => `
+            <div class="server-item">
+                <div><strong>${s.display_hostname || s.hostname}</strong></div>
+                <div class="server-meta">system: ${s.raw_hostname || '-'} | ip: ${s.ip || 'Unknown IP'} | status: ${s.status}</div>
+                <div class="server-actions">
+                    <button class="btn" onclick="setServerAlias(${s.id}, '${(s.user_alias || '').replace(/'/g,"\\'")}')">Set My Alias</button>
+                    <button class="btn" onclick="clearServerAlias(${s.id})">Clear Alias</button>
+                </div>
+            </div>
+        `).join('');
+    });
+}
+
+function setServerAlias(serverId, currentAlias='') {
+    const alias = prompt('Set personal alias (only visible to you) / 设置仅自己可见别名', currentAlias || '');
+    if (alias === null) return;
+    api('/api/user/servers/' + serverId + '/alias', {
+        method: 'PUT',
+        body: JSON.stringify({alias_name: alias.trim()})
+    }).then(r => {
+        if (r.error) { setMsg('tokenMessage', r.error, false); return; }
+        loadMyServers();
+    });
+}
+
+function clearServerAlias(serverId) {
+    api('/api/user/servers/' + serverId + '/alias', {
+        method: 'PUT',
+        body: JSON.stringify({alias_name: ''})
+    }).then(r => {
+        if (r.error) { setMsg('tokenMessage', r.error, false); return; }
+        loadMyServers();
     });
 }
 

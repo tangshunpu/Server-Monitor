@@ -10,6 +10,7 @@ import json
 import time
 import hmac
 import hashlib
+import re
 import secrets
 import string
 import sqlite3
@@ -76,7 +77,9 @@ def init_db():
     # --- Existing tables ---
     db.execute('''CREATE TABLE IF NOT EXISTS servers (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        hostname    TEXT NOT NULL UNIQUE,
+        hostname    TEXT NOT NULL,
+        mac_address TEXT UNIQUE,
+        display_name TEXT DEFAULT '',
         ip          TEXT,
         os_info     TEXT,
         last_seen   TIMESTAMP,
@@ -119,6 +122,14 @@ def init_db():
         FOREIGN KEY (user_id)   REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
     )''')
+    db.execute('''CREATE TABLE IF NOT EXISTS user_server_preferences (
+        user_id     INTEGER NOT NULL,
+        server_id   INTEGER NOT NULL,
+        alias_name  TEXT DEFAULT '',
+        PRIMARY KEY (user_id, server_id),
+        FOREIGN KEY (user_id)   REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+    )''')
     db.execute('''CREATE TABLE IF NOT EXISTS invites (
         id                  INTEGER PRIMARY KEY AUTOINCREMENT,
         token               TEXT NOT NULL UNIQUE,
@@ -142,6 +153,9 @@ def init_db():
     db.execute('''CREATE INDEX IF NOT EXISTS idx_user_agent_tokens_user
                   ON user_agent_tokens(user_id)''')
 
+    # --- Schema migration: servers hostname unique -> mac unique ---
+    _migrate_servers_table_for_mac_identity(db)
+
     # --- Schema migration: add new columns if missing ---
     # metrics.errors
     cols = [r[1] for r in db.execute('PRAGMA table_info(metrics)').fetchall()]
@@ -153,6 +167,13 @@ def init_db():
         db.execute("ALTER TABLE servers ADD COLUMN admin_status TEXT DEFAULT 'normal'")
     if 'admin_status_note' not in scols:
         db.execute("ALTER TABLE servers ADD COLUMN admin_status_note TEXT DEFAULT ''")
+    if 'display_name' not in scols:
+        db.execute("ALTER TABLE servers ADD COLUMN display_name TEXT DEFAULT ''")
+    if 'mac_address' not in scols:
+        db.execute("ALTER TABLE servers ADD COLUMN mac_address TEXT")
+    db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_servers_mac_address '
+               'ON servers(mac_address) WHERE mac_address IS NOT NULL AND mac_address != ""')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_servers_hostname ON servers(hostname)')
 
     # --- Announcements table ---
     db.execute('''CREATE TABLE IF NOT EXISTS announcements (
@@ -183,6 +204,51 @@ def init_db():
     db.close()
 
 
+def _migrate_servers_table_for_mac_identity(db):
+    """Migrate old servers table from unique hostname to unique mac_address.
+    将旧 servers 表从 hostname 唯一迁移为 mac_address 唯一。"""
+    # Old schema had UNIQUE(hostname); this blocks same-hostname machines.
+    has_unique_hostname = False
+    indexes = db.execute("PRAGMA index_list('servers')").fetchall()
+    for idx in indexes:
+        # PRAGMA index_list columns: seq, name, unique, origin, partial
+        if int(idx[2]) != 1:
+            continue
+        idx_name = idx[1]
+        cols = db.execute(f"PRAGMA index_info('{idx_name}')").fetchall()
+        col_names = [c[2] for c in cols]
+        if col_names == ['hostname']:
+            has_unique_hostname = True
+            break
+
+    if not has_unique_hostname:
+        return
+
+    db.execute('PRAGMA foreign_keys = OFF')
+    db.execute('''CREATE TABLE IF NOT EXISTS servers_new (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        hostname         TEXT NOT NULL,
+        mac_address      TEXT UNIQUE,
+        display_name     TEXT DEFAULT '',
+        ip               TEXT,
+        os_info          TEXT,
+        last_seen        TIMESTAMP,
+        status           TEXT DEFAULT 'offline',
+        admin_status     TEXT DEFAULT 'normal',
+        admin_status_note TEXT DEFAULT ''
+    )''')
+    db.execute('''INSERT INTO servers_new
+                  (id, hostname, ip, os_info, last_seen, status, admin_status, admin_status_note, display_name)
+                  SELECT id, hostname, ip, os_info, last_seen, status,
+                         COALESCE(admin_status, 'normal'),
+                         COALESCE(admin_status_note, ''),
+                         ''
+                  FROM servers''')
+    db.execute('DROP TABLE servers')
+    db.execute('ALTER TABLE servers_new RENAME TO servers')
+    db.execute('PRAGMA foreign_keys = ON')
+
+
 # ---------------------------------------------------------------------------
 # Auth helpers / 认证辅助
 # ---------------------------------------------------------------------------
@@ -198,6 +264,17 @@ def _generate_password(length=12):
 def _hash_user_agent_token(token):
     """Hash user-generated agent token before storage / 用户 token 入库前哈希"""
     return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+def _normalize_mac_address(mac):
+    """Normalize MAC address to aa:bb:cc:dd:ee:ff format.
+    规范化 MAC 地址为 aa:bb:cc:dd:ee:ff。"""
+    if not mac:
+        return None
+    cleaned = re.sub(r'[^0-9a-fA-F]', '', str(mac))
+    if len(cleaned) != 12:
+        return None
+    return ':'.join(cleaned[i:i + 2] for i in range(0, 12, 2)).lower()
 
 
 def _load_session_user():
@@ -521,6 +598,43 @@ def api_user_change_password():
     return jsonify({'status': 'ok'})
 
 
+@app.route('/api/user/servers/<int:server_id>/alias', methods=['PUT'])
+@login_required
+def api_user_set_server_alias(server_id):
+    data = request.get_json(silent=True) or {}
+    alias_name = (data.get('alias_name') or '').strip()
+    if len(alias_name) > 128:
+        return jsonify({'error': 'Alias is too long / 别名过长'}), 400
+
+    db = get_db()
+    server = db.execute('SELECT id FROM servers WHERE id=?', (server_id,)).fetchone()
+    if not server:
+        return jsonify({'error': 'Server not found'}), 404
+
+    if g.user['role'] != 'admin':
+        access = db.execute(
+            'SELECT 1 FROM user_server_access WHERE user_id=? AND server_id=?',
+            (g.user['id'], server_id)
+        ).fetchone()
+        if not access:
+            return jsonify({'error': 'Forbidden'}), 403
+
+    if alias_name:
+        db.execute(
+            '''INSERT INTO user_server_preferences (user_id, server_id, alias_name)
+               VALUES (?, ?, ?)
+               ON CONFLICT(user_id, server_id) DO UPDATE SET alias_name=excluded.alias_name''',
+            (g.user['id'], server_id, alias_name)
+        )
+    else:
+        db.execute(
+            'DELETE FROM user_server_preferences WHERE user_id=? AND server_id=?',
+            (g.user['id'], server_id)
+        )
+    db.commit()
+    return jsonify({'status': 'ok'})
+
+
 # ---------------------------------------------------------------------------
 # Admin page / 管理页面
 # ---------------------------------------------------------------------------
@@ -763,12 +877,37 @@ def api_admin_delete_invite(invite_id):
 @admin_required
 def api_admin_servers():
     db = get_db()
-    servers = db.execute('SELECT id, hostname, ip, admin_status, admin_status_note FROM servers ORDER BY hostname').fetchall()
+    servers = db.execute(
+        '''SELECT id, hostname, display_name, mac_address, ip, admin_status, admin_status_note
+           FROM servers
+           ORDER BY COALESCE(NULLIF(display_name, ''), hostname)'''
+    ).fetchall()
     return jsonify([{
-        'id': s['id'], 'hostname': s['hostname'], 'ip': s['ip'],
+        'id': s['id'],
+        'hostname': s['display_name'] or s['hostname'],
+        'raw_hostname': s['hostname'],
+        'display_name': s['display_name'] or '',
+        'mac_address': s['mac_address'] or '',
+        'ip': s['ip'],
         'admin_status': s['admin_status'] or 'normal',
         'admin_status_note': s['admin_status_note'] or '',
     } for s in servers])
+
+
+@app.route('/api/admin/servers/<int:server_id>/name', methods=['PUT'])
+@admin_required
+def api_admin_set_server_name(server_id):
+    data = request.get_json(silent=True) or {}
+    display_name = (data.get('display_name') or '').strip()
+    if len(display_name) > 128:
+        return jsonify({'error': 'Display name is too long / 显示名过长'}), 400
+    db = get_db()
+    row = db.execute('SELECT id FROM servers WHERE id=?', (server_id,)).fetchone()
+    if not row:
+        return jsonify({'error': 'Server not found'}), 404
+    db.execute('UPDATE servers SET display_name=? WHERE id=?', (display_name, server_id))
+    db.commit()
+    return jsonify({'status': 'ok'})
 
 
 @app.route('/api/admin/servers/<int:server_id>/status', methods=['PUT'])
@@ -895,12 +1034,38 @@ def api_report():
         return jsonify({'error': 'Invalid data'}), 400
 
     now = datetime.now().isoformat()
+    hostname = str(data.get('hostname', '')).strip() or 'unknown'
+    mac_address = _normalize_mac_address(data.get('mac_address'))
 
-    # Upsert server / 更新或插入服务器记录
-    server = db.execute(
-        'SELECT id FROM servers WHERE hostname = ?',
-        (data['hostname'],)
-    ).fetchone()
+    # Upsert server / 更新或插入服务器记录（优先按 MAC）
+    server = None
+    if mac_address:
+        server = db.execute(
+            'SELECT id FROM servers WHERE mac_address = ?',
+            (mac_address,)
+        ).fetchone()
+
+        # Backfill MAC for legacy rows that were keyed by hostname only.
+        if not server:
+            legacy = db.execute(
+                '''SELECT id FROM servers
+                   WHERE hostname = ?
+                     AND (mac_address IS NULL OR mac_address = '')
+                   ORDER BY id LIMIT 1''',
+                (hostname,)
+            ).fetchone()
+            if legacy:
+                db.execute(
+                    'UPDATE servers SET mac_address = ? WHERE id = ?',
+                    (mac_address, legacy['id'])
+                )
+                server = legacy
+
+    if not server and not mac_address:
+        server = db.execute(
+            'SELECT id FROM servers WHERE hostname = ? ORDER BY id LIMIT 1',
+            (hostname,)
+        ).fetchone()
 
     if server:
         server_id = server['id']
@@ -914,13 +1079,13 @@ def api_report():
                     'error': 'Hostname already exists and is not assigned to this user'
                 }), 403
         db.execute(
-            'UPDATE servers SET ip=?, os_info=?, last_seen=?, status=? WHERE id=?',
-            (data.get('ip'), data.get('os_info'), now, 'online', server_id)
+            'UPDATE servers SET hostname=?, mac_address=COALESCE(mac_address, ?), ip=?, os_info=?, last_seen=?, status=? WHERE id=?',
+            (hostname, mac_address, data.get('ip'), data.get('os_info'), now, 'online', server_id)
         )
     else:
         cursor = db.execute(
-            'INSERT INTO servers (hostname, ip, os_info, last_seen, status) VALUES (?,?,?,?,?)',
-            (data['hostname'], data.get('ip'), data.get('os_info'), now, 'online')
+            'INSERT INTO servers (hostname, mac_address, ip, os_info, last_seen, status) VALUES (?,?,?,?,?,?)',
+            (hostname, mac_address, data.get('ip'), data.get('os_info'), now, 'online')
         )
         server_id = cursor.lastrowid
         if report_user_id is not None:
@@ -965,17 +1130,25 @@ def _build_server_data(user):
     db = get_db()
 
     if user['role'] == 'admin':
-        servers = db.execute('SELECT * FROM servers ORDER BY hostname').fetchall()
+        servers = db.execute(
+            '''SELECT * FROM servers
+               ORDER BY COALESCE(NULLIF(display_name, ''), hostname)'''
+        ).fetchall()
     else:
         servers = db.execute(
             '''SELECT s.* FROM servers s
                JOIN user_server_access usa ON s.id = usa.server_id
                WHERE usa.user_id = ?
-               ORDER BY s.hostname''',
+               ORDER BY COALESCE(NULLIF(s.display_name, ''), s.hostname)''',
             (user['id'],)
         ).fetchall()
 
     can_view_procs = bool(user.get('can_view_processes'))
+    alias_rows = db.execute(
+        'SELECT server_id, alias_name FROM user_server_preferences WHERE user_id = ?',
+        (user['id'],)
+    ).fetchall()
+    alias_map = {r['server_id']: r['alias_name'] for r in alias_rows if r['alias_name']}
     result = []
 
     for s in servers:
@@ -1015,9 +1188,18 @@ def _build_server_data(user):
         else:
             effective_status = 'online'
 
+        user_alias = alias_map.get(s['id'], '')
+        display_name = s['display_name'] or ''
+        display_hostname = user_alias or display_name or s['hostname']
+
         info = {
             'id':                s['id'],
-            'hostname':          s['hostname'],
+            'hostname':          display_hostname,
+            'display_hostname':  display_hostname,
+            'raw_hostname':      s['hostname'],
+            'display_name':      display_name,
+            'user_alias':        user_alias,
+            'mac_address':       s['mac_address'] if 'mac_address' in s.keys() else None,
             'ip':                s['ip'],
             'os_info':           s['os_info'],
             'status':            effective_status,
