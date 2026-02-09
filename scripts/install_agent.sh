@@ -112,7 +112,7 @@ chmod 600 "$INSTALL_DIR/agent_config.yaml"
 
 # --- Install Python dependencies / 安装 Python 依赖 ---
 info "Installing Python dependencies / 正在安装 Python 依赖..."
-pip3 install -q psutil requests pyyaml
+pip install -q psutil requests pyyaml
 
 # --- Create systemd service / 创建 systemd 服务 ---
 info "Creating systemd service / 正在创建 systemd 服务..."

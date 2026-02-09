@@ -88,7 +88,7 @@ if [ "$MODE" = "server" ] || [ "$MODE" = "all" ]; then
     download_file "$REPO_URL/templates/user.html"      "$INSTALL_DIR/templates/user.html"
 
     info "Installing/updating Python dependencies / 安装/更新依赖..."
-    pip3 install -q flask pyyaml
+    pip install -q flask pyyaml
 
     if $HAS_SERVER; then
         info "Restarting server-monitor service / 重启 server-monitor 服务..."
@@ -106,7 +106,7 @@ if [ "$MODE" = "agent" ] || [ "$MODE" = "all" ]; then
     download_file "$REPO_URL/agent.py" "$INSTALL_DIR/agent.py"
 
     info "Installing/updating Python dependencies / 安装/更新依赖..."
-    pip3 install -q psutil requests pyyaml
+    pip install -q psutil requests pyyaml
 
     if $HAS_AGENT; then
         info "Restarting server-monitor-agent service / 重启 server-monitor-agent 服务..."
