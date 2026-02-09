@@ -302,13 +302,15 @@ def _check_network_connectivity():
     try:
         out = subprocess.run(cn_cmd, capture_output=True, text=True, timeout=7)
         http_code = (out.stdout or '').strip()
-        cn_ok = out.returncode == 0 and http_code not in ('', '000')
+        code_num = int(http_code) if http_code.isdigit() else None
+        # Prefer curl exit code; use HTTP code as auxiliary signal.
+        cn_ok = (out.returncode == 0) and (code_num is None or code_num < 500)
         result['network_cn_ok'] = cn_ok
         if cn_ok:
-            result['network_cn_detail'] = f'HTTP {http_code}'
+            result['network_cn_detail'] = f'HTTP {http_code or "N/A"}'
         else:
             err = (out.stderr or '').strip()
-            result['network_cn_detail'] = (err or f'HTTP {http_code or "000"}')[:160]
+            result['network_cn_detail'] = (err or f'curl exit {out.returncode}, HTTP {http_code or "N/A"}')[:160]
     except FileNotFoundError:
         result['network_cn_ok'] = False
         result['network_cn_detail'] = 'curl command not found'
@@ -328,13 +330,15 @@ def _check_network_connectivity():
     try:
         out = subprocess.run(global_cmd, capture_output=True, text=True, timeout=10)
         http_code = (out.stdout or '').strip()
-        global_ok = out.returncode == 0 and http_code not in ('', '000')
+        code_num = int(http_code) if http_code.isdigit() else None
+        # Prefer curl exit code; use HTTP code as auxiliary signal.
+        global_ok = (out.returncode == 0) and (code_num is None or code_num < 500)
         result['network_global_ok'] = global_ok
         if global_ok:
-            result['network_global_detail'] = f'HTTP {http_code}'
+            result['network_global_detail'] = f'HTTP {http_code or "N/A"}'
         else:
             err = (out.stderr or '').strip()
-            result['network_global_detail'] = (err or f'HTTP {http_code or "000"}')[:160]
+            result['network_global_detail'] = (err or f'curl exit {out.returncode}, HTTP {http_code or "N/A"}')[:160]
     except FileNotFoundError:
         result['network_global_ok'] = False
         result['network_global_detail'] = 'curl command not found'
