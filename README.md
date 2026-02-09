@@ -50,6 +50,10 @@ server-moniter/
 **Deploy the main server** (on the monitoring host):
 
 ```bash
+# Recommended: save first, then run (enables admin/password prompts)
+curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/install_server.sh -o install.sh && sudo bash install.sh
+
+# Or piped (uses defaults: admin/admin123, port 5100)
 curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/install_server.sh | sudo bash
 ```
 
@@ -263,6 +267,10 @@ If a server has no NVIDIA GPU, the agent will automatically skip GPU collection;
 部署主服务端（在监控主机上执行）：
 
 ```bash
+# 推荐：先保存再运行（可交互设置管理员账号和密码）
+curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/install_server.sh -o install.sh && sudo bash install.sh
+
+# 或管道方式（使用默认值：admin/admin123，端口 5100）
 curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/install_server.sh | sudo bash
 ```
 
@@ -367,8 +375,6 @@ python agent.py -c agent_config.yaml
 Agent 通过调用 `nvidia-smi` 命令采集 GPU 信息，无需额外安装 Python GPU 库。要求被监控服务器已安装 NVIDIA 驱动。如果服务器没有 NVIDIA GPU，Agent 会自动跳过 GPU 采集，其他指标正常上报。
 
 ### 安全说明
-
-- 管理员密码 **仅** 存储在 `config.yaml` 中，不存入数据库，不通过任何 API 返回
 - 登录使用 `hmac.compare_digest` 进行时间安全比较，防止计时攻击
 - 登录失败有速率限制，防止暴力破解
 - Agent 上报使用独立的 Bearer token 认证

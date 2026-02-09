@@ -4,9 +4,9 @@
 # 服务器监控 — 主服务端一键部署脚本
 # ============================================================
 # Usage / 用法:
-#   curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/install_server.sh | bash
-#   OR / 或者
-#   bash scripts/install_server.sh
+#   curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/install_server.sh -o install.sh && sudo bash install.sh
+#   (Recommended: save first, then run - so prompts work correctly)
+#   OR / 或者: curl -sSL ... | sudo bash  (uses defaults, no prompts)
 # ============================================================
 
 set -e
@@ -71,18 +71,24 @@ if [ ! -f "$INSTALL_DIR/config.yaml" ]; then
     AGENT_TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(24))")
 
     # Prompt for admin credentials / 提示输入管理员凭据
+    # Use /dev/tty when piped (curl | bash) so read doesn't consume the script from stdin
     echo ""
-    read -p "Admin username (default: admin) / 管理员用户名 (默认: admin): " ADMIN_USER
+    if [ -t 0 ]; then
+        read -p "Admin username (default: admin) / 管理员用户名 (默认: admin): " ADMIN_USER
+        read -sp "Admin password / 管理员密码: " ADMIN_PASS
+        echo ""
+        read -p "Web port (default 5100) / Web 端口 (默认 5100): " WEB_PORT
+    else
+        warn "Running non-interactively (e.g. piped), using defaults. Use: curl -o install.sh && bash install.sh for prompts."
+        ADMIN_USER="admin"
+        ADMIN_PASS="admin123"
+        WEB_PORT="5100"
+    fi
     ADMIN_USER=${ADMIN_USER:-admin}
-
-    read -sp "Admin password / 管理员密码: " ADMIN_PASS
-    echo ""
     if [ -z "$ADMIN_PASS" ]; then
         ADMIN_PASS="admin123"
         warn "Empty password, using default: admin123 / 密码为空，使用默认: admin123"
     fi
-
-    read -p "Web port (default 5100) / Web 端口 (默认 5100): " WEB_PORT
     WEB_PORT=${WEB_PORT:-5100}
 
     cat > "$INSTALL_DIR/config.yaml" <<YAML
@@ -119,12 +125,8 @@ else
 fi
 
 # --- Read actual port from config / 从配置文件读取实际端口 ---
-ACTUAL_PORT=$(python3 -c "
-import yaml
-with open('${INSTALL_DIR}/config.yaml') as f:
-    c = yaml.safe_load(f)
-print(c.get('server', {}).get('port', 5100))
-" 2>/dev/null || echo "5100")
+ACTUAL_PORT=$(grep -E '^[[:space:]]*port:' "$INSTALL_DIR/config.yaml" 2>/dev/null | head -1 | sed 's/.*port:[[:space:]]*//' | tr -d ' "' || echo "5100")
+ACTUAL_PORT=${ACTUAL_PORT:-5100}
 
 # --- Install Python dependencies / 安装 Python 依赖 ---
 info "Installing Python dependencies / 正在安装 Python 依赖..."
