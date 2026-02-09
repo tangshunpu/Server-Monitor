@@ -277,8 +277,12 @@
     <div class="modal">
         <h3>Reset Password</h3>
         <p style="color:var(--text-secondary);font-size:14px;margin-bottom:16px">
-            Generate a new random password for <strong id="resetUserName"></strong>?
+            Set a new password for <strong id="resetUserName"></strong> (leave blank to auto-generate).
         </p>
+        <div class="form-group">
+            <label>New Password (Optional) / 新密码（可选）</label>
+            <input type="password" id="resetCustomPw" placeholder="At least 6 characters; blank = random">
+        </div>
         <div id="resetResult"></div>
         <div class="modal-actions">
             <button class="btn" onclick="closeModal('resetModal')">Close</button>
@@ -338,7 +342,28 @@ function fmtTime(ts) {
 }
 
 function copyText(text) {
-    navigator.clipboard.writeText(text).catch(()=>{});
+    if (!text) return;
+    const fallbackCopy = () => {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+        document.body.removeChild(ta);
+        if (!ok) {
+            window.prompt('Copy manually / 请手动复制:', text);
+        }
+    };
+
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).catch(fallbackCopy);
+    } else {
+        fallbackCopy();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -501,13 +526,22 @@ function deleteUser(uid, name) {
 function openResetPw(uid, name) {
     resetUserId = uid;
     document.getElementById('resetUserName').textContent = name;
+    document.getElementById('resetCustomPw').value = '';
     document.getElementById('resetResult').innerHTML = '';
     document.getElementById('resetBtn').style.display = '';
     document.getElementById('resetModal').classList.add('active');
 }
 
 function confirmReset() {
-    api('/api/admin/users/'+resetUserId+'/reset-password', {method:'POST'}).then(r => {
+    const customPassword = document.getElementById('resetCustomPw').value.trim();
+    if (customPassword && customPassword.length < 6) {
+        alert('Password must be at least 6 characters / 密码至少 6 个字符');
+        return;
+    }
+    api('/api/admin/users/'+resetUserId+'/reset-password', {
+        method:'POST',
+        body: JSON.stringify({password: customPassword})
+    }).then(r => {
         if(r.error) { alert(r.error); return; }
         document.getElementById('resetResult').innerHTML = `
             <div class="result-box">

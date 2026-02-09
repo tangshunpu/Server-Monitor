@@ -563,7 +563,13 @@ def api_admin_reset_password(user_id):
     if not user:
         return jsonify({'error': 'User not found'}), 404
 
-    password = _generate_password()
+    data = request.get_json(silent=True) or {}
+    password = (data.get('password') or '').strip()
+    if password and len(password) < 6:
+        return jsonify({'error': 'Password must be at least 6 characters / 密码至少 6 个字符'}), 400
+    if not password:
+        password = _generate_password()
+
     pw_hash = generate_password_hash(password)
     db.execute('UPDATE users SET password_hash = ? WHERE id = ?', (pw_hash, user_id))
     db.commit()
