@@ -202,8 +202,14 @@
 
         .overview-card:hover { border-color: rgba(10,132,255,0.28); transform: translateY(-1px); box-shadow: 0 10px 22px var(--shadow); }
         .overview-card.status-offline { opacity: 0.55; }
-        .overview-card.status-maintenance { border-color: var(--blue); }
+        .overview-card.status-maintenance {
+            border-color: var(--yellow);
+            background: linear-gradient(135deg, rgba(210,153,34,0.16), rgba(210,153,34,0.06)), var(--bg-card);
+        }
         .overview-card.status-fault { border-color: var(--red); }
+        .overview-card.status-fault {
+            background: linear-gradient(135deg, rgba(248,81,73,0.18), rgba(248,81,73,0.06)), var(--bg-card);
+        }
         .overview-card.status-warning { border-color: var(--yellow); }
 
         .ov-dot {
@@ -214,7 +220,7 @@
 
         .ov-dot.online { background: var(--green); box-shadow: 0 0 4px rgba(48,209,88,0.28); }
         .ov-dot.warning { background: var(--yellow); box-shadow: 0 0 4px rgba(255,214,10,0.28); }
-        .ov-dot.maintenance { background: var(--blue); box-shadow: 0 0 4px rgba(10,132,255,0.26); }
+        .ov-dot.maintenance { background: var(--yellow); box-shadow: 0 0 4px rgba(255,214,10,0.28); }
         .ov-dot.fault { background: var(--red); box-shadow: 0 0 5px rgba(255,94,87,0.28); animation: pulse 1.4s infinite; }
         .ov-dot.offline { background: var(--text-muted); }
 
@@ -446,6 +452,7 @@
             border: 1px solid var(--border);
             border-radius: 18px;
             overflow: hidden;
+            cursor: pointer;
             transition: transform .24s cubic-bezier(.22,.61,.36,1), border-color .24s cubic-bezier(.22,.61,.36,1), box-shadow .24s cubic-bezier(.22,.61,.36,1);
             flex: 0 0 calc((100% - 60px) / 4);
             min-width: 360px;
@@ -496,8 +503,14 @@
             }
         }
         .server-card.offline { opacity: 0.65; }
-        .server-card.maintenance { border-left: 3px solid var(--blue); }
+        .server-card.maintenance {
+            border-left: 3px solid var(--yellow);
+            background: linear-gradient(135deg, rgba(210,153,34,0.12), rgba(210,153,34,0.03)), var(--bg-card);
+        }
         .server-card.fault { border-left: 3px solid var(--red); }
+        .server-card.fault {
+            background: linear-gradient(135deg, rgba(248,81,73,0.13), rgba(248,81,73,0.03)), var(--bg-card);
+        }
         .server-card.warning { border-left: 3px solid var(--yellow); }
 
         /* Announcement banners */
@@ -509,7 +522,7 @@
 
         /* Status badge in card header */
         .status-badge { padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; margin-left: 8px; }
-        .status-badge.maintenance { background: rgba(88,166,255,0.12); color: var(--blue); }
+        .status-badge.maintenance { background: rgba(210,153,34,0.2); color: var(--yellow); }
         .status-badge.fault { background: rgba(248,81,73,0.15); color: var(--red); }
         .status-badge.warning { background: rgba(210,153,34,0.15); color: var(--yellow); }
         .admin-note { font-size: 11px; color: var(--text-muted); margin-top: 2px; font-style: italic; }
@@ -536,7 +549,7 @@
 
         .status-dot.online { background: var(--green); box-shadow: 0 0 4px rgba(48,209,88,0.26); }
         .status-dot.warning { background: var(--yellow); box-shadow: 0 0 4px rgba(255,214,10,0.26); }
-        .status-dot.maintenance { background: var(--blue); box-shadow: 0 0 4px rgba(10,132,255,0.24); }
+        .status-dot.maintenance { background: var(--yellow); box-shadow: 0 0 4px rgba(255,214,10,0.26); }
         .status-dot.fault { background: var(--red); box-shadow: 0 0 5px rgba(255,94,87,0.26); animation: pulse 1.4s infinite; }
         .status-dot.offline { background: var(--text-muted); }
 
@@ -667,7 +680,7 @@
             font-size: 10px;
             font-weight: 600;
         }
-        .gpu-admin-badge.maintenance { background: rgba(88,166,255,0.12); color: var(--blue); }
+        .gpu-admin-badge.maintenance { background: rgba(210,153,34,0.2); color: var(--yellow); }
         .gpu-admin-badge.fault { background: rgba(248,81,73,0.15); color: var(--red); }
         .gpu-admin-note { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
         .gpu-bus-id { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
@@ -965,6 +978,11 @@ function renderNetPill(label, ok) {
     </div>`;
 }
 
+function statusText(status, upper = false) {
+    if (status === 'fault') return upper ? 'FAULTY' : 'Faulty';
+    return upper ? String(status || '').toUpperCase() : (status ? status.charAt(0).toUpperCase() + status.slice(1) : '');
+}
+
 // ---------------------------------------------------------------------------
 // Overview
 // ---------------------------------------------------------------------------
@@ -994,7 +1012,7 @@ function renderOverview(data) {
         const st = s.status; // online, offline, warning, maintenance, fault
         const gpu = m ? getGpuSummary(m.gpu_data) : { label: '-', active: 0, total: 0, hasNvidia: false };
         const statusLabel = (st === 'maintenance' || st === 'fault') ?
-            `<span class="status-badge ${st}">${st.toUpperCase()}</span>` : '';
+            `<span class="status-badge ${st}">${statusText(st, true)}</span>` : '';
         const noteHTML = s.admin_status_note && s.admin_status !== 'normal' ?
             `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;font-style:italic">${s.admin_status_note}</div>` : '';
         const vendorBadge = gpu.hasNvidia ? `<span class="ov-vendor-badge nvidia"><span class="nvidia-mark">N</span>NVIDIA</span>` : '';
@@ -1072,7 +1090,7 @@ function renderGpuCard(gpu) {
     const utilWidth = utilValue <= 0 ? 0.1 : utilValue;
     const gpuStatus = gpu.admin_status || 'normal';
     const statusBadge = (gpuStatus === 'maintenance' || gpuStatus === 'fault')
-        ? `<span class="gpu-admin-badge ${gpuStatus}">${gpuStatus.toUpperCase()}</span>`
+        ? `<span class="gpu-admin-badge ${gpuStatus}">${statusText(gpuStatus, true)}</span>`
         : '';
     const gpuNote = gpu.admin_status_note ? `<div class="gpu-admin-note">${gpu.admin_status_note}</div>` : '';
     const busId = gpu.bus_id ? `<div class="gpu-bus-id">Bus: ${gpu.bus_id}</div>` : '';
@@ -1132,7 +1150,7 @@ function renderServerCard(server) {
 
     // Status badge for non-normal admin status
     const statusBadge = (st === 'maintenance' || st === 'fault' || st === 'warning') ?
-        `<span class="status-badge ${st}">${st.charAt(0).toUpperCase()+st.slice(1)}</span>` : '';
+        `<span class="status-badge ${st}">${statusText(st)}</span>` : '';
     const adminNote = s.admin_status_note && s.admin_status !== 'normal' ?
         `<div class="admin-note">${s.admin_status_note}</div>` : '';
 
@@ -1213,7 +1231,7 @@ function renderServerCard(server) {
         metricsHTML = `<div class="no-metrics">${errorsHTML || 'Waiting for agent data...'}</div>`;
     }
 
-    return `<div class="server-card ${st}" data-server-id="${s.id}">
+    return `<div class="server-card ${st}" data-server-id="${s.id}" onclick="focusDetailServer(${s.id})">
         <div class="card-header">
             <div class="card-header-left">
                 <span class="status-dot ${st}"></span>
@@ -1224,7 +1242,7 @@ function renderServerCard(server) {
                 </div>
             </div>
             ${currentUser.role === 'admin' ? `<div class="card-actions">
-                <button class="btn-icon" title="Delete server" onclick="openDeleteModal(${s.id}, '${(s.hostname || '').replace(/'/g, "\\'")}')">&#x1F5D1;</button>
+                <button class="btn-icon" title="Delete server" onclick="event.stopPropagation();openDeleteModal(${s.id}, '${(s.hostname || '').replace(/'/g, "\\'")}')">&#x1F5D1;</button>
             </div>` : ''}
         </div>
         ${metricsHTML}

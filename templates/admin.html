@@ -215,7 +215,7 @@
             <select id="ssStatus">
                 <option value="normal">Normal</option>
                 <option value="maintenance">Maintenance</option>
-                <option value="fault">Fault</option>
+                <option value="fault">Faulty</option>
             </select>
         </div>
         <div class="form-group">
@@ -808,8 +808,8 @@ function loadServers() {
         tb.innerHTML = servers.map(s => {
             const st = s.admin_status || 'normal';
             let badge;
-            if(st==='maintenance') badge='<span class="badge" style="background:rgba(88,166,255,.12);color:var(--blue)">Maintenance</span>';
-            else if(st==='fault') badge='<span class="badge" style="background:rgba(248,81,73,.15);color:var(--red)">Fault</span>';
+            if(st==='maintenance') badge='<span class="badge" style="background:rgba(210,153,34,.2);color:var(--yellow)">Maintenance</span>';
+            else if(st==='fault') badge='<span class="badge" style="background:rgba(248,81,73,.2);color:var(--red)">Faulty</span>';
             else badge='<span class="badge badge-yes">Normal</span>';
             const nameHtml = `<div><strong>${s.hostname}</strong></div><div class="hostname-sub">system: ${s.raw_hostname}</div>`;
             const identity = s.mac_address || 'legacy(no-mac)';
@@ -898,7 +898,7 @@ function openGpuStatus(serverId, hostname) {
                     <select id="gpuStatus_${idx}">
                         <option value="normal" ${st==='normal'?'selected':''}>Normal</option>
                         <option value="maintenance" ${st==='maintenance'?'selected':''}>Maintenance</option>
-                        <option value="fault" ${st==='fault'?'selected':''}>Fault</option>
+                        <option value="fault" ${st==='fault'?'selected':''}>Faulty</option>
                     </select>
                     <input id="gpuNote_${idx}" type="text" value="${note.replace(/"/g, '&quot;')}" placeholder="note (optional)">
                     <button class="btn btn-sm btn-primary" onclick="saveGpuStatus(${idx})">Save</button>
