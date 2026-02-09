@@ -72,6 +72,7 @@ def close_db(exception):
 
 def init_db():
     db = sqlite3.connect(DATABASE)
+    db.row_factory = sqlite3.Row
     db.execute('PRAGMA foreign_keys = ON')
 
     # --- Existing tables ---
@@ -330,7 +331,11 @@ def _normalize_bus_id(bus_id):
 
 def _get_setting(db, key, default=''):
     row = db.execute('SELECT value FROM app_settings WHERE key=?', (key,)).fetchone()
-    return row['value'] if row else default
+    if not row:
+        return default
+    if isinstance(row, sqlite3.Row):
+        return row['value']
+    return row[0]
 
 
 def _set_setting(db, key, value):
