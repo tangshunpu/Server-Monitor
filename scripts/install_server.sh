@@ -114,6 +114,14 @@ else
     info "config.yaml already exists, skipping / config.yaml 已存在，跳过"
 fi
 
+# --- Read actual port from config / 从配置文件读取实际端口 ---
+ACTUAL_PORT=$(python3 -c "
+import yaml
+with open('${INSTALL_DIR}/config.yaml') as f:
+    c = yaml.safe_load(f)
+print(c.get('server', {}).get('port', 5100))
+" 2>/dev/null || echo "5100")
+
 # --- Install Python dependencies / 安装 Python 依赖 ---
 info "Installing Python dependencies / 正在安装 Python 依赖..."
 pip3 install -q flask pyyaml
@@ -149,7 +157,7 @@ info "============================================"
 info "  Server Monitor installed successfully!"
 info "  服务器监控安装完成！"
 info "============================================"
-info "  Dashboard: http://$(hostname -I | awk '{print $1}'):${WEB_PORT:-5100}"
+info "  Dashboard: http://$(hostname -I | awk '{print $1}'):${ACTUAL_PORT}"
 info "  Service:   systemctl status $SERVICE_NAME"
 info "  Logs:      journalctl -u $SERVICE_NAME -f"
 info "============================================"
