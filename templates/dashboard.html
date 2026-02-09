@@ -192,7 +192,10 @@
         }
 
         .overview-card:hover { border-color: var(--text-muted); }
-        .overview-card.offline-card { opacity: 0.55; }
+        .overview-card.status-offline { opacity: 0.55; }
+        .overview-card.status-maintenance { border-color: var(--blue); }
+        .overview-card.status-fault { border-color: var(--red); }
+        .overview-card.status-warning { border-color: var(--yellow); }
 
         .ov-dot {
             width: 10px; height: 10px;
@@ -201,7 +204,10 @@
         }
 
         .ov-dot.online { background: var(--green); box-shadow: 0 0 6px rgba(63,185,80,0.5); }
-        .ov-dot.offline { background: var(--red); }
+        .ov-dot.warning { background: var(--yellow); box-shadow: 0 0 6px rgba(210,153,34,0.5); }
+        .ov-dot.maintenance { background: var(--blue); box-shadow: 0 0 6px rgba(88,166,255,0.5); }
+        .ov-dot.fault { background: var(--red); box-shadow: 0 0 8px rgba(248,81,73,0.6); animation: pulse 1s infinite; }
+        .ov-dot.offline { background: var(--text-muted); }
 
         .ov-info { flex: 1; min-width: 0; }
 
@@ -270,6 +276,27 @@
 
         .server-card:hover { border-color: var(--text-muted); }
         .server-card.offline { opacity: 0.65; }
+        .server-card.maintenance { border-left: 3px solid var(--blue); }
+        .server-card.fault { border-left: 3px solid var(--red); }
+        .server-card.warning { border-left: 3px solid var(--yellow); }
+
+        /* Announcement banners */
+        .announcements { margin-bottom: 16px; display: flex; flex-direction: column; gap: 8px; }
+        .ann-banner { padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; }
+        .ann-info { background: rgba(88,166,255,0.12); color: var(--blue); border: 1px solid rgba(88,166,255,0.25); }
+        .ann-warning { background: rgba(210,153,34,0.12); color: var(--yellow); border: 1px solid rgba(210,153,34,0.25); }
+        .ann-critical { background: rgba(248,81,73,0.12); color: var(--red); border: 1px solid rgba(248,81,73,0.25); }
+
+        /* Status badge in card header */
+        .status-badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; margin-left: 8px; }
+        .status-badge.maintenance { background: rgba(88,166,255,0.12); color: var(--blue); }
+        .status-badge.fault { background: rgba(248,81,73,0.15); color: var(--red); }
+        .status-badge.warning { background: rgba(210,153,34,0.15); color: var(--yellow); }
+        .admin-note { font-size: 11px; color: var(--text-muted); margin-top: 2px; font-style: italic; }
+
+        /* Error banner inside card */
+        .error-banner { background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.25); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: var(--red); }
+        .error-banner-item { padding: 2px 0; }
 
         .card-header {
             display: flex;
@@ -288,7 +315,10 @@
         }
 
         .status-dot.online { background: var(--green); box-shadow: 0 0 8px rgba(63,185,80,0.5); }
-        .status-dot.offline { background: var(--red); }
+        .status-dot.warning { background: var(--yellow); box-shadow: 0 0 8px rgba(210,153,34,0.5); }
+        .status-dot.maintenance { background: var(--blue); box-shadow: 0 0 8px rgba(88,166,255,0.5); }
+        .status-dot.fault { background: var(--red); box-shadow: 0 0 8px rgba(248,81,73,0.6); animation: pulse 1s infinite; }
+        .status-dot.offline { background: var(--text-muted); }
 
         .server-name { font-size: 16px; font-weight: 600; }
         .server-meta { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
@@ -588,6 +618,7 @@
 
 <!-- Main Content -->
 <main class="main">
+    <div id="announcements"></div>
     <div id="overview"></div>
     <div id="dashboard"></div>
 </main>
@@ -692,14 +723,19 @@ function renderOverview(data) {
 
     const cards = data.map(s => {
         const m = s.metrics;
-        const isOnline = s.status === 'online';
+        const st = s.status; // online, offline, warning, maintenance, fault
         const gpu = m ? getGpuSummary(m.gpu_data) : { label: '-', active: 0, total: 0 };
+        const statusLabel = (st === 'maintenance' || st === 'fault') ?
+            `<span class="status-badge ${st}">${st.toUpperCase()}</span>` : '';
+        const noteHTML = s.admin_status_note && s.admin_status !== 'normal' ?
+            `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;font-style:italic">${s.admin_status_note}</div>` : '';
 
-        return `<div class="overview-card ${isOnline ? '' : 'offline-card'}">
-            <span class="ov-dot ${isOnline ? 'online' : 'offline'}"></span>
+        return `<div class="overview-card status-${st}">
+            <span class="ov-dot ${st}"></span>
             <div class="ov-info">
-                <div class="ov-hostname">${s.hostname}</div>
+                <div class="ov-hostname">${s.hostname} ${statusLabel}</div>
                 <div class="ov-gpu-summary">${gpu.label}</div>
+                ${noteHTML}
                 <div class="ov-stats">
                     <span>CPU <span class="ov-stat-val">${m ? fmt(m.cpu_percent, '%') : '-'}</span></span>
                     <span>MEM <span class="ov-stat-val">${m ? fmt(m.memory_percent, '%') : '-'}</span></span>
@@ -802,7 +838,17 @@ function renderGpuCard(gpu) {
 function renderServerCard(server) {
     const s = server;
     const m = s.metrics;
-    const isOnline = s.status === 'online';
+    const st = s.status; // online, offline, warning, maintenance, fault
+
+    // Status badge for non-normal admin status
+    const statusBadge = (st === 'maintenance' || st === 'fault' || st === 'warning') ?
+        `<span class="status-badge ${st}">${st.charAt(0).toUpperCase()+st.slice(1)}</span>` : '';
+    const adminNote = s.admin_status_note && s.admin_status !== 'normal' ?
+        `<div class="admin-note">${s.admin_status_note}</div>` : '';
+
+    // Error banner
+    const errorsHTML = (s.errors && s.errors.length > 0) ?
+        `<div class="error-banner">${s.errors.map(e => `<div class="error-banner-item">&#x26A0; ${e.message}</div>`).join('')}</div>` : '';
 
     let metricsHTML = '';
     if (m) {
@@ -818,6 +864,7 @@ function renderServerCard(server) {
 
         metricsHTML = `
         <div class="card-body">
+            ${errorsHTML}
             <div class="metrics-row">
                 <div class="metric-item">
                     <div class="metric-label">
@@ -873,16 +920,17 @@ function renderServerCard(server) {
             <span>${s.os_info || ''}</span>
         </div>`;
     } else {
-        metricsHTML = '<div class="no-metrics">Waiting for agent data...</div>';
+        metricsHTML = `<div class="no-metrics">${errorsHTML || 'Waiting for agent data...'}</div>`;
     }
 
-    return `<div class="server-card ${isOnline ? '' : 'offline'}">
+    return `<div class="server-card ${st}">
         <div class="card-header">
             <div class="card-header-left">
-                <span class="status-dot ${isOnline ? 'online' : 'offline'}"></span>
+                <span class="status-dot ${st}"></span>
                 <div>
-                    <div class="server-name">${s.hostname}</div>
+                    <div class="server-name">${s.hostname} ${statusBadge}</div>
                     <div class="server-meta">${s.ip || 'Unknown IP'} · Last seen: ${fmtTime(s.last_seen)}</div>
+                    ${adminNote}
                 </div>
             </div>
             ${currentUser.role === 'admin' ? `<div class="card-actions">
@@ -896,6 +944,19 @@ function renderServerCard(server) {
 // ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
+function renderAnnouncements() {
+    const el = document.getElementById('announcements');
+    fetch('/api/announcements')
+        .then(r => r.json())
+        .then(anns => {
+            if (!anns || anns.length === 0) { el.innerHTML = ''; return; }
+            el.innerHTML = `<div class="announcements">${anns.map(a =>
+                `<div class="ann-banner ann-${a.level}">${a.content}</div>`
+            ).join('')}</div>`;
+        })
+        .catch(() => {});
+}
+
 function renderDashboard(data) {
     const container = document.getElementById('dashboard');
     const countEl = document.getElementById('serverCount');
@@ -913,11 +974,11 @@ function renderDashboard(data) {
     }
 
     const onlineCount = data.filter(s => s.status === 'online').length;
-    const offlineCount = data.length - onlineCount;
+    const issueCount = data.filter(s => ['offline','warning','fault','maintenance'].includes(s.status)).length;
 
     countEl.innerHTML = `
         <span class="count-badge">${onlineCount} Online</span>
-        ${offlineCount > 0 ? `<span class="count-badge offline">${offlineCount} Offline</span>` : ''}
+        ${issueCount > 0 ? `<span class="count-badge offline">${issueCount} Issues</span>` : ''}
         <span>${data.length} server(s)</span>`;
 
     renderOverview(data);
@@ -937,6 +998,7 @@ function refreshData() {
             if (data) { serverData = data; renderDashboard(data); }
         })
         .catch(err => console.error('Refresh error:', err));
+    renderAnnouncements();
 }
 
 function updateCountdown() {
@@ -975,6 +1037,7 @@ document.getElementById('deleteModal').addEventListener('click', (e) => {
 // Init
 // ---------------------------------------------------------------------------
 renderDashboard(serverData);
+renderAnnouncements();
 setInterval(updateCountdown, 1000);
 </script>
 </body>

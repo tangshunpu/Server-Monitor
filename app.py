@@ -130,6 +130,28 @@ def init_db():
         used_by             INTEGER
     )''')
 
+    # --- Schema migration: add new columns if missing ---
+    # metrics.errors
+    cols = [r[1] for r in db.execute('PRAGMA table_info(metrics)').fetchall()]
+    if 'errors' not in cols:
+        db.execute('ALTER TABLE metrics ADD COLUMN errors TEXT')
+    # servers.admin_status / admin_status_note
+    scols = [r[1] for r in db.execute('PRAGMA table_info(servers)').fetchall()]
+    if 'admin_status' not in scols:
+        db.execute("ALTER TABLE servers ADD COLUMN admin_status TEXT DEFAULT 'normal'")
+    if 'admin_status_note' not in scols:
+        db.execute("ALTER TABLE servers ADD COLUMN admin_status_note TEXT DEFAULT ''")
+
+    # --- Announcements table ---
+    db.execute('''CREATE TABLE IF NOT EXISTS announcements (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        content     TEXT NOT NULL,
+        level       TEXT NOT NULL DEFAULT 'info',
+        created_by  INTEGER,
+        created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        active      INTEGER DEFAULT 1
+    )''')
+
     # --- Bootstrap admin from config.yaml if no users exist ---
     count = db.execute('SELECT COUNT(*) FROM users').fetchone()[0]
     if count == 0:
@@ -618,15 +640,112 @@ def api_admin_delete_invite(invite_id):
 
 
 # ---------------------------------------------------------------------------
-# Admin API — Servers list (for permission UI) / 服务器列表（权限 UI 用）
+# Admin API — Servers list & status / 服务器列表 & 状态管理
 # ---------------------------------------------------------------------------
 
 @app.route('/api/admin/servers')
 @admin_required
 def api_admin_servers():
     db = get_db()
-    servers = db.execute('SELECT id, hostname, ip FROM servers ORDER BY hostname').fetchall()
-    return jsonify([{'id': s['id'], 'hostname': s['hostname'], 'ip': s['ip']} for s in servers])
+    servers = db.execute('SELECT id, hostname, ip, admin_status, admin_status_note FROM servers ORDER BY hostname').fetchall()
+    return jsonify([{
+        'id': s['id'], 'hostname': s['hostname'], 'ip': s['ip'],
+        'admin_status': s['admin_status'] or 'normal',
+        'admin_status_note': s['admin_status_note'] or '',
+    } for s in servers])
+
+
+@app.route('/api/admin/servers/<int:server_id>/status', methods=['PUT'])
+@admin_required
+def api_admin_set_server_status(server_id):
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data'}), 400
+    admin_status = data.get('admin_status', 'normal')
+    admin_note = data.get('admin_status_note', '')
+    if admin_status not in ('normal', 'fault', 'maintenance'):
+        return jsonify({'error': 'Invalid status'}), 400
+    db = get_db()
+    db.execute('UPDATE servers SET admin_status=?, admin_status_note=? WHERE id=?',
+               (admin_status, admin_note, server_id))
+    db.commit()
+    return jsonify({'status': 'ok'})
+
+
+# ---------------------------------------------------------------------------
+# Admin API — Announcements / 管理 API — 公告
+# ---------------------------------------------------------------------------
+
+@app.route('/api/announcements')
+@login_required
+def api_announcements():
+    """List active announcements (for all logged-in users).
+    列出活跃公告（所有登录用户可见）。"""
+    db = get_db()
+    rows = db.execute(
+        'SELECT id, content, level, created_at FROM announcements WHERE active=1 ORDER BY created_at DESC'
+    ).fetchall()
+    return jsonify([{
+        'id': r['id'], 'content': r['content'],
+        'level': r['level'], 'created_at': r['created_at'],
+    } for r in rows])
+
+
+@app.route('/api/admin/announcements')
+@admin_required
+def api_admin_list_announcements():
+    db = get_db()
+    rows = db.execute('SELECT * FROM announcements ORDER BY created_at DESC').fetchall()
+    return jsonify([{
+        'id': r['id'], 'content': r['content'], 'level': r['level'],
+        'active': r['active'], 'created_at': r['created_at'],
+    } for r in rows])
+
+
+@app.route('/api/admin/announcements', methods=['POST'])
+@admin_required
+def api_admin_create_announcement():
+    data = request.get_json()
+    if not data or not data.get('content', '').strip():
+        return jsonify({'error': 'Content is required'}), 400
+    level = data.get('level', 'info')
+    if level not in ('info', 'warning', 'critical'):
+        level = 'info'
+    db = get_db()
+    cursor = db.execute(
+        'INSERT INTO announcements (content, level, created_by) VALUES (?,?,?)',
+        (data['content'].strip(), level, g.user['id'])
+    )
+    db.commit()
+    return jsonify({'id': cursor.lastrowid, 'status': 'ok'})
+
+
+@app.route('/api/admin/announcements/<int:ann_id>', methods=['PUT'])
+@admin_required
+def api_admin_update_announcement(ann_id):
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data'}), 400
+    db = get_db()
+    ann = db.execute('SELECT * FROM announcements WHERE id=?', (ann_id,)).fetchone()
+    if not ann:
+        return jsonify({'error': 'Not found'}), 404
+    content = data.get('content', ann['content'])
+    level = data.get('level', ann['level'])
+    active = data.get('active', ann['active'])
+    db.execute('UPDATE announcements SET content=?, level=?, active=? WHERE id=?',
+               (content, level, int(active), ann_id))
+    db.commit()
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/admin/announcements/<int:ann_id>', methods=['DELETE'])
+@admin_required
+def api_admin_delete_announcement(ann_id):
+    db = get_db()
+    db.execute('DELETE FROM announcements WHERE id=?', (ann_id,))
+    db.commit()
+    return jsonify({'status': 'ok'})
 
 
 # ---------------------------------------------------------------------------
@@ -671,14 +790,15 @@ def api_report():
            (server_id, timestamp, cpu_percent, cpu_count,
             memory_total, memory_used, memory_percent,
             disk_total, disk_used, disk_percent,
-            gpu_data, network_sent, network_recv)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            gpu_data, network_sent, network_recv, errors)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
         (server_id, now,
          data.get('cpu_percent'), data.get('cpu_count'),
          data.get('memory_total'), data.get('memory_used'), data.get('memory_percent'),
          data.get('disk_total'), data.get('disk_used'), data.get('disk_percent'),
          json.dumps(data.get('gpu_data', [])),
-         data.get('network_sent'), data.get('network_recv'))
+         data.get('network_sent'), data.get('network_recv'),
+         json.dumps(data.get('errors', [])))
     )
     db.commit()
 
@@ -719,23 +839,48 @@ def _build_server_data(user):
             (s['id'],)
         ).fetchone()
 
+        # Determine effective status / 计算有效状态
+        admin_status = s['admin_status'] if 'admin_status' in s.keys() else 'normal'
+        admin_note = s['admin_status_note'] if 'admin_status_note' in s.keys() else ''
+
         last_seen = None
-        is_online = False
+        agent_online = False
         if s['last_seen']:
             try:
                 last_seen = datetime.fromisoformat(s['last_seen'])
-                is_online = (datetime.now() - last_seen).total_seconds() < 120
+                agent_online = (datetime.now() - last_seen).total_seconds() < 120
             except ValueError:
                 pass
 
+        # Parse errors from latest metric
+        errors = []
+        if latest:
+            try:
+                errors = json.loads(latest['errors']) if latest['errors'] else []
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        # Status priority: admin override > offline > warning > online
+        if admin_status in ('maintenance', 'fault'):
+            effective_status = admin_status
+        elif not agent_online:
+            effective_status = 'offline'
+        elif errors:
+            effective_status = 'warning'
+        else:
+            effective_status = 'online'
+
         info = {
-            'id':        s['id'],
-            'hostname':  s['hostname'],
-            'ip':        s['ip'],
-            'os_info':   s['os_info'],
-            'status':    'online' if is_online else 'offline',
-            'last_seen': s['last_seen'],
-            'metrics':   None,
+            'id':                s['id'],
+            'hostname':          s['hostname'],
+            'ip':                s['ip'],
+            'os_info':           s['os_info'],
+            'status':            effective_status,
+            'admin_status':      admin_status,
+            'admin_status_note': admin_note,
+            'last_seen':         s['last_seen'],
+            'errors':            errors,
+            'metrics':           None,
         }
 
         if latest:

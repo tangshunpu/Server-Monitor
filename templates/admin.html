@@ -109,6 +109,8 @@
     <div class="tabs">
         <button class="tab active" data-tab="users">Users</button>
         <button class="tab" data-tab="invites">Invites</button>
+        <button class="tab" data-tab="servers">Servers</button>
+        <button class="tab" data-tab="announcements">Announcements</button>
     </div>
 
     <!-- Users Tab -->
@@ -136,7 +138,79 @@
             </tr></thead><tbody id="invitesBody"></tbody></table>
         </div>
     </div>
+
+    <!-- Servers Tab -->
+    <div class="tab-content" id="tab-servers">
+        <div style="margin-bottom:16px;">
+            <span style="font-size:14px;color:var(--text-secondary)" id="serverCountLabel"></span>
+        </div>
+        <div class="table-wrap">
+            <table><thead><tr>
+                <th>Hostname</th><th>IP</th><th>Status</th><th>Note</th><th>Actions</th>
+            </tr></thead><tbody id="serversBody"></tbody></table>
+        </div>
+    </div>
+
+    <!-- Announcements Tab -->
+    <div class="tab-content" id="tab-announcements">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <span style="font-size:14px;color:var(--text-secondary)" id="annCountLabel"></span>
+            <button class="btn btn-primary" onclick="openCreateAnn()">+ New Announcement</button>
+        </div>
+        <div class="table-wrap">
+            <table><thead><tr>
+                <th>Content</th><th>Level</th><th>Active</th><th>Created</th><th>Actions</th>
+            </tr></thead><tbody id="annBody"></tbody></table>
+        </div>
+    </div>
 </main>
+
+<!-- Server Status Modal -->
+<div class="modal-overlay" id="serverStatusModal">
+    <div class="modal">
+        <h3>Set Server Status</h3>
+        <p style="color:var(--text-secondary);font-size:14px;margin-bottom:16px" id="ssHostname"></p>
+        <div class="form-group">
+            <label>Status</label>
+            <select id="ssStatus">
+                <option value="normal">Normal</option>
+                <option value="maintenance">Maintenance</option>
+                <option value="fault">Fault</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Note (optional)</label>
+            <input type="text" id="ssNote" placeholder="e.g. Replacing GPU 3, ETA 2 days">
+        </div>
+        <div class="modal-actions">
+            <button class="btn" onclick="closeModal('serverStatusModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="submitServerStatus()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- Announcement Modal -->
+<div class="modal-overlay" id="annModal">
+    <div class="modal">
+        <h3 id="annModalTitle">New Announcement</h3>
+        <div class="form-group">
+            <label>Content</label>
+            <input type="text" id="annContent" placeholder="Announcement message...">
+        </div>
+        <div class="form-group">
+            <label>Level</label>
+            <select id="annLevel">
+                <option value="info">Info (blue)</option>
+                <option value="warning">Warning (yellow)</option>
+                <option value="critical">Critical (red)</option>
+            </select>
+        </div>
+        <div class="modal-actions">
+            <button class="btn" onclick="closeModal('annModal')">Cancel</button>
+            <button class="btn btn-primary" id="annModalBtn" onclick="submitAnn()">Create</button>
+        </div>
+    </div>
+</div>
 
 <!-- Create/Edit User Modal -->
 <div class="modal-overlay" id="userModal">
@@ -270,12 +344,6 @@ function copyText(text) {
 // ---------------------------------------------------------------------------
 // Load data
 // ---------------------------------------------------------------------------
-function loadAll() {
-    api('/api/admin/servers').then(d => { allServers = d; });
-    loadUsers();
-    loadInvites();
-}
-
 function loadUsers() {
     api('/api/admin/users').then(users => {
         document.getElementById('userCountLabel').textContent = users.length + ' user(s)';
@@ -496,8 +564,139 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
 });
 
 // ---------------------------------------------------------------------------
+// Servers Tab
+// ---------------------------------------------------------------------------
+let statusServerId = null;
+
+function loadServers() {
+    api('/api/admin/servers').then(servers => {
+        allServers = servers;
+        document.getElementById('serverCountLabel').textContent = servers.length + ' server(s)';
+        const tb = document.getElementById('serversBody');
+        if(servers.length===0) { tb.innerHTML='<tr><td colspan="5" class="empty-row">No servers</td></tr>'; return; }
+        tb.innerHTML = servers.map(s => {
+            const st = s.admin_status || 'normal';
+            let badge;
+            if(st==='maintenance') badge='<span class="badge" style="background:rgba(88,166,255,.12);color:var(--blue)">Maintenance</span>';
+            else if(st==='fault') badge='<span class="badge" style="background:rgba(248,81,73,.15);color:var(--red)">Fault</span>';
+            else badge='<span class="badge badge-yes">Normal</span>';
+            return `<tr>
+                <td><strong>${s.hostname}</strong></td>
+                <td style="font-size:12px">${s.ip||'-'}</td>
+                <td>${badge}</td>
+                <td style="font-size:12px;color:var(--text-muted);max-width:200px">${s.admin_status_note||'-'}</td>
+                <td class="actions">
+                    <button class="btn btn-sm" onclick="openServerStatus(${s.id},'${s.hostname}','${st}','${(s.admin_status_note||'').replace(/'/g,"\\'")}')">Set Status</button>
+                </td>
+            </tr>`;
+        }).join('');
+    });
+}
+
+function openServerStatus(id, hostname, status, note) {
+    statusServerId = id;
+    document.getElementById('ssHostname').textContent = hostname;
+    document.getElementById('ssStatus').value = status;
+    document.getElementById('ssNote').value = note;
+    document.getElementById('serverStatusModal').classList.add('active');
+}
+
+function submitServerStatus() {
+    const status = document.getElementById('ssStatus').value;
+    const note = document.getElementById('ssNote').value;
+    api('/api/admin/servers/'+statusServerId+'/status', {
+        method:'PUT', body:JSON.stringify({admin_status:status, admin_status_note:note})
+    }).then(r => {
+        if(r.error) { alert(r.error); return; }
+        closeModal('serverStatusModal');
+        loadServers();
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Announcements Tab
+// ---------------------------------------------------------------------------
+let editingAnnId = null;
+
+function loadAnnouncements() {
+    api('/api/admin/announcements').then(anns => {
+        document.getElementById('annCountLabel').textContent = anns.length + ' announcement(s)';
+        const tb = document.getElementById('annBody');
+        if(anns.length===0) { tb.innerHTML='<tr><td colspan="5" class="empty-row">No announcements</td></tr>'; return; }
+        tb.innerHTML = anns.map(a => {
+            let lvlBadge;
+            if(a.level==='critical') lvlBadge='<span class="badge" style="background:rgba(248,81,73,.15);color:var(--red)">Critical</span>';
+            else if(a.level==='warning') lvlBadge='<span class="badge" style="background:rgba(210,153,34,.15);color:var(--yellow)">Warning</span>';
+            else lvlBadge='<span class="badge" style="background:rgba(88,166,255,.12);color:var(--blue)">Info</span>';
+            const activeBadge = a.active ? '<span class="badge badge-yes">Yes</span>' : '<span class="badge badge-no">No</span>';
+            return `<tr>
+                <td style="max-width:400px">${a.content}</td>
+                <td>${lvlBadge}</td>
+                <td>${activeBadge}</td>
+                <td style="font-size:12px;color:var(--text-muted)">${fmtTime(a.created_at)}</td>
+                <td class="actions">
+                    <button class="btn btn-sm" onclick="openEditAnn(${a.id},'${a.content.replace(/'/g,"\\'")}','${a.level}',${a.active})">Edit</button>
+                    <button class="btn btn-sm" onclick="toggleAnn(${a.id},${a.active?0:1})">${a.active?'Hide':'Show'}</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteAnn(${a.id})">Delete</button>
+                </td>
+            </tr>`;
+        }).join('');
+    });
+}
+
+function openCreateAnn() {
+    editingAnnId = null;
+    document.getElementById('annModalTitle').textContent = 'New Announcement';
+    document.getElementById('annModalBtn').textContent = 'Create';
+    document.getElementById('annContent').value = '';
+    document.getElementById('annLevel').value = 'info';
+    document.getElementById('annModal').classList.add('active');
+}
+
+function openEditAnn(id, content, level, active) {
+    editingAnnId = id;
+    document.getElementById('annModalTitle').textContent = 'Edit Announcement';
+    document.getElementById('annModalBtn').textContent = 'Save';
+    document.getElementById('annContent').value = content;
+    document.getElementById('annLevel').value = level;
+    document.getElementById('annModal').classList.add('active');
+}
+
+function submitAnn() {
+    const content = document.getElementById('annContent').value.trim();
+    const level = document.getElementById('annLevel').value;
+    if(!content) { alert('Content is required'); return; }
+    if(editingAnnId) {
+        api('/api/admin/announcements/'+editingAnnId, {
+            method:'PUT', body:JSON.stringify({content, level})
+        }).then(r => { if(r.error){alert(r.error);return;} closeModal('annModal'); loadAnnouncements(); });
+    } else {
+        api('/api/admin/announcements', {
+            method:'POST', body:JSON.stringify({content, level})
+        }).then(r => { if(r.error){alert(r.error);return;} closeModal('annModal'); loadAnnouncements(); });
+    }
+}
+
+function toggleAnn(id, active) {
+    api('/api/admin/announcements/'+id, {method:'PUT', body:JSON.stringify({active})})
+        .then(() => loadAnnouncements());
+}
+
+function deleteAnn(id) {
+    if(!confirm('Delete this announcement?')) return;
+    api('/api/admin/announcements/'+id, {method:'DELETE'}).then(() => loadAnnouncements());
+}
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
+function loadAll() {
+    api('/api/admin/servers').then(d => { allServers = d; });
+    loadUsers();
+    loadInvites();
+    loadServers();
+    loadAnnouncements();
+}
 loadAll();
 </script>
 </body>
