@@ -1,11 +1,11 @@
-![Server Monitor](image.png)
+
 
 # Server Monitor — Multi-Server GPU Monitoring Dashboard
 
 **[中文文档 / Chinese Documentation](#中文文档)**
 
 A lightweight server monitoring system designed for multi-GPU server clusters. Built with Python + Flask + SQLite — ready to use with minimal setup.
-
+![Server Monitor](image.png)
 ## Features
 
 - **Deep GPU Monitoring** — Real-time display of each GPU's utilization, VRAM, temperature, power draw, and running processes (PID, process name, VRAM usage)
