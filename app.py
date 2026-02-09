@@ -713,6 +713,12 @@ def api_server_history(server_id):
             gpu['bus_id'] = bus_id or gpu.get('bus_id')
             gpu['admin_status'] = st
             gpu['admin_status_note'] = note
+            if g.user['role'] != 'admin' and st in ('maintenance', 'fault'):
+                gpu['gpu_utilization'] = None
+                gpu['memory_total'] = None
+                gpu['memory_used'] = None
+                gpu['memory_free'] = None
+                gpu['memory_utilization'] = None
             normalized_gpu_data.append(gpu)
         gpu_data = normalized_gpu_data
         if not g.user.get('can_view_processes'):
@@ -1706,6 +1712,12 @@ def _build_server_data(user):
                 gpu['bus_id'] = bus_id or gpu.get('bus_id')
                 gpu['admin_status'] = st
                 gpu['admin_status_note'] = note
+                if user['role'] != 'admin' and st in ('maintenance', 'fault'):
+                    gpu['gpu_utilization'] = None
+                    gpu['memory_total'] = None
+                    gpu['memory_used'] = None
+                    gpu['memory_free'] = None
+                    gpu['memory_utilization'] = None
                 merged_gpu_data.append(gpu)
             gpu_data = merged_gpu_data
 

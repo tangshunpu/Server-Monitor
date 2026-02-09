@@ -20,7 +20,9 @@
             --text-muted:   #8b98b3;
             --green:        #30d158;
             --yellow:       #ffd60a;
-            --red:          #ff5e57;
+            --red:          #ff453a;
+            --yellow-rgb:   255,214,10;
+            --red-rgb:      255,69,58;
             --blue:         #0a84ff;
             --purple:       #bf8bff;
             --orange:       #ff9f0a;
@@ -38,8 +40,10 @@
             --text-secondary: #566079;
             --text-muted:   #7d879c;
             --green:        #22a544;
-            --yellow:       #b78500;
-            --red:          #d93030;
+            --yellow:       #ffcc00;
+            --red:          #ff3b30;
+            --yellow-rgb:   255,204,0;
+            --red-rgb:      255,59,48;
             --blue:         #0a84ff;
             --purple:       #8250df;
             --orange:       #c66a00;
@@ -204,11 +208,11 @@
         .overview-card.status-offline { opacity: 0.55; }
         .overview-card.status-maintenance {
             border-color: var(--yellow);
-            background: linear-gradient(135deg, rgba(210,153,34,0.16), rgba(210,153,34,0.06)), var(--bg-card);
+            background: linear-gradient(135deg, rgba(var(--yellow-rgb),0.18), rgba(var(--yellow-rgb),0.06)), var(--bg-card);
         }
         .overview-card.status-fault { border-color: var(--red); }
         .overview-card.status-fault {
-            background: linear-gradient(135deg, rgba(248,81,73,0.18), rgba(248,81,73,0.06)), var(--bg-card);
+            background: linear-gradient(135deg, rgba(var(--red-rgb),0.2), rgba(var(--red-rgb),0.06)), var(--bg-card);
         }
         .overview-card.status-warning { border-color: var(--yellow); }
 
@@ -219,9 +223,9 @@
         }
 
         .ov-dot.online { background: var(--green); box-shadow: 0 0 4px rgba(48,209,88,0.28); }
-        .ov-dot.warning { background: var(--yellow); box-shadow: 0 0 4px rgba(255,214,10,0.28); }
-        .ov-dot.maintenance { background: var(--yellow); box-shadow: 0 0 4px rgba(255,214,10,0.28); }
-        .ov-dot.fault { background: var(--red); box-shadow: 0 0 5px rgba(255,94,87,0.28); animation: pulse 1.4s infinite; }
+        .ov-dot.warning { background: var(--yellow); box-shadow: 0 0 4px rgba(var(--yellow-rgb),0.3); }
+        .ov-dot.maintenance { background: var(--yellow); box-shadow: 0 0 4px rgba(var(--yellow-rgb),0.3); }
+        .ov-dot.fault { background: var(--red); box-shadow: 0 0 5px rgba(var(--red-rgb),0.3); animation: pulse 1.4s infinite; }
         .ov-dot.offline { background: var(--text-muted); }
 
         .ov-info {
@@ -319,8 +323,8 @@
         }
         .ov-net-pill.ok .value { color: var(--green); }
         .ov-net-pill.fail {
-            border-color: rgba(248,81,73,0.4);
-            background: rgba(248,81,73,0.12);
+            border-color: rgba(var(--red-rgb),0.42);
+            background: rgba(var(--red-rgb),0.14);
         }
         .ov-net-pill.fail .value { color: var(--red); }
         .ov-net-pill.unknown .value { color: var(--text-muted); }
@@ -505,11 +509,11 @@
         .server-card.offline { opacity: 0.65; }
         .server-card.maintenance {
             border-left: 3px solid var(--yellow);
-            background: linear-gradient(135deg, rgba(210,153,34,0.12), rgba(210,153,34,0.03)), var(--bg-card);
+            background: linear-gradient(135deg, rgba(var(--yellow-rgb),0.14), rgba(var(--yellow-rgb),0.04)), var(--bg-card);
         }
         .server-card.fault { border-left: 3px solid var(--red); }
         .server-card.fault {
-            background: linear-gradient(135deg, rgba(248,81,73,0.13), rgba(248,81,73,0.03)), var(--bg-card);
+            background: linear-gradient(135deg, rgba(var(--red-rgb),0.14), rgba(var(--red-rgb),0.04)), var(--bg-card);
         }
         .server-card.warning { border-left: 3px solid var(--yellow); }
 
@@ -517,18 +521,18 @@
         .announcements { margin-bottom: 18px; display: flex; flex-direction: column; gap: 10px; }
         .ann-banner { padding: 12px 16px; border-radius: 14px; font-size: 13px; font-weight: 500; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
         .ann-info { background: rgba(88,166,255,0.12); color: var(--blue); border: 1px solid rgba(88,166,255,0.25); }
-        .ann-warning { background: rgba(210,153,34,0.12); color: var(--yellow); border: 1px solid rgba(210,153,34,0.25); }
-        .ann-critical { background: rgba(248,81,73,0.12); color: var(--red); border: 1px solid rgba(248,81,73,0.25); }
+        .ann-warning { background: rgba(var(--yellow-rgb),0.14); color: var(--yellow); border: 1px solid rgba(var(--yellow-rgb),0.3); }
+        .ann-critical { background: rgba(var(--red-rgb),0.14); color: var(--red); border: 1px solid rgba(var(--red-rgb),0.3); }
 
         /* Status badge in card header */
         .status-badge { padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; margin-left: 8px; }
-        .status-badge.maintenance { background: rgba(210,153,34,0.2); color: var(--yellow); }
-        .status-badge.fault { background: rgba(248,81,73,0.15); color: var(--red); }
-        .status-badge.warning { background: rgba(210,153,34,0.15); color: var(--yellow); }
+        .status-badge.maintenance { background: rgba(var(--yellow-rgb),0.22); color: var(--yellow); }
+        .status-badge.fault { background: rgba(var(--red-rgb),0.2); color: var(--red); }
+        .status-badge.warning { background: rgba(var(--yellow-rgb),0.18); color: var(--yellow); }
         .admin-note { font-size: 11px; color: var(--text-muted); margin-top: 2px; font-style: italic; }
 
         /* Error banner inside card */
-        .error-banner { background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.25); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: var(--red); }
+        .error-banner { background: rgba(var(--red-rgb),0.1); border: 1px solid rgba(var(--red-rgb),0.3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: var(--red); }
         .error-banner-item { padding: 2px 0; }
 
         .card-header {
@@ -548,9 +552,9 @@
         }
 
         .status-dot.online { background: var(--green); box-shadow: 0 0 4px rgba(48,209,88,0.26); }
-        .status-dot.warning { background: var(--yellow); box-shadow: 0 0 4px rgba(255,214,10,0.26); }
-        .status-dot.maintenance { background: var(--yellow); box-shadow: 0 0 4px rgba(255,214,10,0.26); }
-        .status-dot.fault { background: var(--red); box-shadow: 0 0 5px rgba(255,94,87,0.26); animation: pulse 1.4s infinite; }
+        .status-dot.warning { background: var(--yellow); box-shadow: 0 0 4px rgba(var(--yellow-rgb),0.28); }
+        .status-dot.maintenance { background: var(--yellow); box-shadow: 0 0 4px rgba(var(--yellow-rgb),0.28); }
+        .status-dot.fault { background: var(--red); box-shadow: 0 0 5px rgba(var(--red-rgb),0.28); animation: pulse 1.4s infinite; }
         .status-dot.offline { background: var(--text-muted); }
 
         .server-name { font-size: 16px; font-weight: 600; }
@@ -569,7 +573,7 @@
             transition: all 0.2s;
         }
 
-        .btn-icon:hover { color: var(--red); background: rgba(248,81,73,0.1); }
+        .btn-icon:hover { color: var(--red); background: rgba(var(--red-rgb),0.12); }
 
         /* ===== Metrics ===== */
         .card-body { padding: 18px 22px; }
@@ -680,8 +684,8 @@
             font-size: 10px;
             font-weight: 600;
         }
-        .gpu-admin-badge.maintenance { background: rgba(210,153,34,0.2); color: var(--yellow); }
-        .gpu-admin-badge.fault { background: rgba(248,81,73,0.15); color: var(--red); }
+        .gpu-admin-badge.maintenance { background: rgba(var(--yellow-rgb),0.22); color: var(--yellow); }
+        .gpu-admin-badge.fault { background: rgba(var(--red-rgb),0.2); color: var(--red); }
         .gpu-admin-note { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
         .gpu-bus-id { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 
@@ -986,21 +990,24 @@ function statusText(status, upper = false) {
 // ---------------------------------------------------------------------------
 // Overview
 // ---------------------------------------------------------------------------
-function getGpuSummary(gpuData) {
-    if (!gpuData || gpuData.length === 0) return { label: 'No GPU', active: 0, total: 0, hasNvidia: false };
+function getGpuSummary(gpuData, serverStatus) {
+    if (!gpuData || gpuData.length === 0) return { label: 'No GPU', available: 0, total: 0, hasNvidia: false };
     const groups = {};
-    let active = 0;
+    let available = 0;
     let hasNvidia = false;
     gpuData.forEach(g => {
         const rawName = g.name || 'GPU';
         if (/nvidia/i.test(rawName)) hasNvidia = true;
         const name = (g.name || 'GPU').replace(/^NVIDIA\s+/i, '');
         groups[name] = (groups[name] || 0) + 1;
-        if ((g.gpu_utilization && g.gpu_utilization > 5) ||
-            (g.processes && g.processes.length > 0)) active++;
+        const gpuAdminStatus = g.admin_status || 'normal';
+        if (gpuAdminStatus !== 'maintenance' && gpuAdminStatus !== 'fault') available++;
     });
     const label = Object.entries(groups).map(([n, c]) => `${c}*${n}`).join(', ');
-    return { label, active, total: gpuData.length, hasNvidia };
+    if (serverStatus === 'maintenance' || serverStatus === 'fault') {
+        return { label, available: 0, total: 0, hasNvidia };
+    }
+    return { label, available, total: gpuData.length, hasNvidia };
 }
 
 function renderOverview(data) {
@@ -1010,7 +1017,10 @@ function renderOverview(data) {
     const cards = data.map(s => {
         const m = s.metrics;
         const st = s.status; // online, offline, warning, maintenance, fault
-        const gpu = m ? getGpuSummary(m.gpu_data) : { label: '-', active: 0, total: 0, hasNvidia: false };
+        const gpu = m ? getGpuSummary(m.gpu_data, st) : { label: '-', available: 0, total: 0, hasNvidia: false };
+        const gpuCountColor = (st === 'maintenance' || st === 'fault')
+            ? '--red'
+            : (gpu.total === 0 ? '--text-muted' : (gpu.available < gpu.total ? '--yellow' : '--green'));
         const statusLabel = (st === 'maintenance' || st === 'fault') ?
             `<span class="status-badge ${st}">${statusText(st, true)}</span>` : '';
         const noteHTML = s.admin_status_note && s.admin_status !== 'normal' ?
@@ -1037,8 +1047,8 @@ function renderOverview(data) {
                 ${netHTML}
             </div>
             <div class="ov-gpu-active">
-                <div class="ov-gpu-active-num" style="color:var(${gpu.total > 0 && gpu.active > 0 ? '--orange' : '--green'})">${gpu.total > 0 ? `${gpu.active}/${gpu.total}` : '-'}</div>
-                <div class="ov-gpu-active-label">GPU Active</div>
+                <div class="ov-gpu-active-num" style="color:var(${gpuCountColor})">${gpu.available}/${gpu.total}</div>
+                <div class="ov-gpu-active-label">GPU Available</div>
             </div>
         </div>`;
     }).join('');
@@ -1078,17 +1088,19 @@ function renderGpuProcesses(processes) {
 // GPU Card
 // ---------------------------------------------------------------------------
 function renderGpuCard(gpu) {
-    const util = gpu.gpu_utilization ?? 0;
-    const memUsed = gpu.memory_used ?? 0;
-    const memTotal = gpu.memory_total ?? 1;
-    const memPct = memTotal > 0 ? (memUsed / memTotal * 100).toFixed(1) : 0;
+    const gpuStatus = gpu.admin_status || 'normal';
+    const hideUsageForUser = currentUser.role !== 'admin' && (gpuStatus === 'maintenance' || gpuStatus === 'fault');
+    const util = hideUsageForUser ? null : gpu.gpu_utilization;
+    const memUsed = hideUsageForUser ? null : gpu.memory_used;
+    const memTotal = hideUsageForUser ? null : gpu.memory_total;
+    const hasMemStats = memUsed !== null && memUsed !== undefined && memTotal !== null && memTotal !== undefined && Number(memTotal) > 0;
+    const memPct = hasMemStats ? (Number(memUsed) / Number(memTotal) * 100).toFixed(1) : null;
     const temp = gpu.temperature;
     const power = gpu.power_draw;
     const powerLimit = gpu.power_limit;
     const utilValue = Number(util) || 0;
     const utilFillClass = `${getBarColor(utilValue)}${utilValue <= 0 ? ' zero' : ''}`;
     const utilWidth = utilValue <= 0 ? 0.1 : utilValue;
-    const gpuStatus = gpu.admin_status || 'normal';
     const statusBadge = (gpuStatus === 'maintenance' || gpuStatus === 'fault')
         ? `<span class="gpu-admin-badge ${gpuStatus}">${statusText(gpuStatus, true)}</span>`
         : '';
@@ -1117,7 +1129,7 @@ function renderGpuCard(gpu) {
             <div class="gpu-metric-item">
                 <div class="metric-label">
                     <span class="metric-name">Utilization</span>
-                    <span class="metric-value">${fmt(util, '%')}</span>
+                    <span class="metric-value">${util === null || util === undefined ? 'N/A' : fmt(util, '%')}</span>
                 </div>
                 <div class="progress-bar">
                     <div class="progress-fill ${utilFillClass}" style="width:${utilWidth}%"></div>
@@ -1126,12 +1138,12 @@ function renderGpuCard(gpu) {
             <div class="gpu-metric-item">
                 <div class="metric-label">
                     <span class="metric-name">VRAM</span>
-                    <span class="metric-value">${memUsed} / ${memTotal} MiB</span>
+                    <span class="metric-value">${hasMemStats ? `${memUsed} / ${memTotal} MiB` : 'N/A'}</span>
                 </div>
                 <div class="progress-bar">
-                    <div class="progress-fill ${getBarColor(parseFloat(memPct))}" style="width:${memPct}%"></div>
+                    <div class="progress-fill ${getBarColor(parseFloat(memPct || 0))} ${hasMemStats ? '' : 'zero'}" style="width:${hasMemStats ? memPct : 0.1}%"></div>
                 </div>
-                <div class="metric-detail">${memPct}% used</div>
+                <div class="metric-detail">${hasMemStats ? `${memPct}% used` : 'N/A'}</div>
             </div>
         </div>
         ${busId}
