@@ -63,7 +63,9 @@
         .badge-expired { background:rgba(248,81,73,.15); color:var(--red); }
         .server-tags { display:flex; flex-wrap:wrap; gap:4px; }
         .server-tag { background:var(--bg-inner); border:1px solid var(--border); padding:1px 6px; border-radius:4px; font-size:11px; color:var(--text-secondary); }
-        .actions { display:flex; gap:6px; }
+        td.actions { white-space: nowrap; }
+        td.actions .btn { margin-right: 6px; }
+        td.actions .btn:last-child { margin-right: 0; }
         .invite-url { font-size:11px; color:var(--blue); word-break:break-all; max-width:280px; cursor:pointer; }
         .invite-url:hover { text-decoration:underline; }
         .empty-row { text-align:center; padding:40px; color:var(--text-muted); font-size:14px; }
