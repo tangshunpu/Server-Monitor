@@ -1,3 +1,5 @@
+![Server Monitor](image.png)
+
 # Server Monitor — Multi-Server GPU Monitoring Dashboard
 
 **[中文文档 / Chinese Documentation](#中文文档)**
