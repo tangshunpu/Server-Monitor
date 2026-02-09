@@ -1,0 +1,23 @@
+# Server Monitor — Docker Compose Deployment
+# 服务器监控 — Docker Compose 一键部署
+#
+# Usage / 用法:
+#   docker-compose up -d
+#
+# Make sure to edit config.yaml before starting!
+# 启动前请先编辑 config.yaml！
+
+services:
+  server-monitor:
+    build: .
+    container_name: server-monitor
+    restart: unless-stopped
+    ports:
+      - "5100:5100"
+    volumes:
+      # Mount config and database for persistence
+      # 挂载配置文件和数据库以持久化
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai

@@ -20,22 +20,68 @@ A lightweight server monitoring system designed for multi-GPU server clusters. B
 
 ```
 server-moniter/
-├── config.yaml          # Main server config (password, token, etc.)
-│                        # 主服务器配置（密码、token 等）
-├── agent_config.yaml    # Agent config template (copy to each server)
-│                        # Agent 配置模板（复制到各服务器）
-├── app.py               # Main server (Flask Web + SQLite + API)
-│                        # 主服务端（Flask Web + SQLite + API）
-├── agent.py             # Monitoring agent (deploy to monitored servers)
-│                        # 监控 Agent（部署到被监控服务器）
-├── requirements.txt     # Python dependencies / Python 依赖
-├── monitor.db           # SQLite database (auto-generated) / SQLite 数据库（自动生成）
+├── config.yaml            # Main server config (password, token, etc.)
+│                          # 主服务器配置（密码、token 等）
+├── agent_config.yaml      # Agent config template (copy to each server)
+│                          # Agent 配置模板（复制到各服务器）
+├── app.py                 # Main server (Flask Web + SQLite + API)
+│                          # 主服务端（Flask Web + SQLite + API）
+├── agent.py               # Monitoring agent (deploy to monitored servers)
+│                          # 监控 Agent（部署到被监控服务器）
+├── requirements.txt       # Python dependencies / Python 依赖
+├── Dockerfile             # Docker image for the server / 主服务端 Docker 镜像
+├── docker-compose.yml     # Docker Compose deployment / Docker Compose 部署
+├── scripts/
+│   ├── install_server.sh  # One-click server deploy / 主服务端一键部署
+│   ├── install_agent.sh   # One-click agent deploy / Agent 一键部署
+│   └── uninstall.sh       # Uninstall script / 卸载脚本
 └── templates/
-    ├── login.html       # Login page / 登录页面
-    └── dashboard.html   # Monitoring dashboard / 监控面板
+    ├── login.html         # Login page / 登录页面
+    └── dashboard.html     # Monitoring dashboard / 监控面板
 ```
 
-## Quick Start
+## One-Click Deployment
+
+### Option A: Shell Scripts (Recommended for GPU servers)
+
+**Deploy the main server** (on the monitoring host):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/install_server.sh | sudo bash
+```
+
+**Deploy agents** (on each monitored server — run one command per server):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/install_agent.sh | sudo bash -s -- \
+  --url http://MONITOR_SERVER_IP:5100 \
+  --token YOUR_AGENT_TOKEN
+```
+
+The scripts will automatically install dependencies, generate configs, and create systemd services.
+
+### Option B: Docker Compose (Server only)
+
+```bash
+git clone https://github.com/tangshunpu/Server-Monitor.git
+cd Server-Monitor
+# Edit config.yaml first! / 先编辑 config.yaml！
+docker-compose up -d
+```
+
+> **Note**: Docker is only recommended for the server side. Agents should run natively on the host for direct access to `nvidia-smi` and system metrics.
+>
+> **注意**：Docker 仅推荐用于主服务端。Agent 应直接在宿主机运行以访问 `nvidia-smi` 和系统指标。
+
+### Uninstall
+
+```bash
+curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/uninstall.sh | sudo bash -s -- all
+```
+
+---
+
+## Manual Setup
 
 ### 1. Install Dependencies
 
@@ -191,7 +237,46 @@ If a server has no NVIDIA GPU, the agent will automatically skip GPU collection;
 - **数据自动清理** — 超过保留天数的历史指标自动删除
 - **暗黑主题 UI** — 现代化监控面板，响应式布局，支持移动端
 
-### 快速开始
+### 一键部署
+
+**方案 A：Shell 脚本（推荐用于 GPU 服务器）**
+
+部署主服务端（在监控主机上执行）：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/install_server.sh | sudo bash
+```
+
+部署 Agent（在每台被监控服务器上执行）：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/install_agent.sh | sudo bash -s -- \
+  --url http://监控主服务器IP:5100 \
+  --token 你的Agent令牌
+```
+
+脚本会自动安装依赖、生成配置、创建 systemd 服务。
+
+**方案 B：Docker Compose（仅主服务端）**
+
+```bash
+git clone https://github.com/tangshunpu/Server-Monitor.git
+cd Server-Monitor
+# 先编辑 config.yaml！
+docker-compose up -d
+```
+
+> **注意**：Docker 仅推荐用于主服务端。Agent 应直接在宿主机运行以访问 `nvidia-smi` 和系统指标。
+
+**卸载**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/uninstall.sh | sudo bash -s -- all
+```
+
+---
+
+### 手动部署
 
 #### 1. 安装依赖
 

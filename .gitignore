@@ -1,5 +1,6 @@
 # Database / 数据库
 *.db
+data/
 
 # Python
 __pycache__/
