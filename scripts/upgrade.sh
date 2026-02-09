@@ -35,6 +35,29 @@ find_preferred_conda_base_python() {
         fi
     fi
 
+    # Try common per-user conda locations when running via sudo.
+    # 在 sudo 场景下尝试调用发起用户 home 下的 conda。
+    local sudo_home=""
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+        sudo_home="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)"
+        [ -z "$sudo_home" ] && sudo_home="/home/$SUDO_USER"
+        local conda_bins=(
+            "$sudo_home/miniconda3/bin/conda"
+            "$sudo_home/anaconda3/bin/conda"
+            "$sudo_home/conda/bin/conda"
+        )
+        local cb
+        for cb in "${conda_bins[@]}"; do
+            if [ -x "$cb" ]; then
+                conda_base="$("$cb" info --base 2>/dev/null || true)"
+                if [ -n "$conda_base" ] && [ -x "$conda_base/bin/python" ]; then
+                    echo "$conda_base/bin/python|conda"
+                    return 0
+                fi
+            fi
+        done
+    fi
+
     local candidates=(
         "/opt/conda/bin/python|conda"
         "/root/miniconda3/bin/python|miniconda"
@@ -42,6 +65,13 @@ find_preferred_conda_base_python() {
         "/usr/local/miniconda3/bin/python|miniconda"
         "/usr/local/anaconda3/bin/python|anaconda"
     )
+    if [ -n "$sudo_home" ]; then
+        candidates+=(
+            "$sudo_home/miniconda3/bin/python|miniconda"
+            "$sudo_home/anaconda3/bin/python|anaconda"
+            "$sudo_home/conda/bin/python|conda"
+        )
+    fi
     local item path dist
     for item in "${candidates[@]}"; do
         path="${item%%|*}"
