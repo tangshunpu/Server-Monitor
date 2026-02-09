@@ -15,7 +15,7 @@ A lightweight server monitoring system designed for multi-GPU server clusters. B
 - **Auto Refresh** — Dashboard pulls latest data every 30 seconds automatically
 - **Auto Data Cleanup** — Historical metrics older than the retention period are automatically purged
 - **Dark / Light Theme** — Toggle between dark and light themes, preference saved in browser
-- **Server Overview Panel** — At-a-glance summary showing each server's GPU model, count, and active status (e.g. "THEGANG2024 (8*A6000)")
+- **Server Overview Panel** — At-a-glance summary showing each server's GPU model, count, and active status
 - **Per-User GPU Usage** — Displays which user and LXC/Incus container owns each GPU process
 
 ## Project Structure
@@ -259,7 +259,7 @@ If a server has no NVIDIA GPU, the agent will automatically skip GPU collection;
 - **自动刷新** — Dashboard 每 30 秒自动拉取最新数据，无需手动刷新
 - **数据自动清理** — 超过保留天数的历史指标自动删除
 - **明暗主题切换** — 支持深色 / 浅色主题，偏好保存在浏览器
-- **服务器总览面板** — 一目了然显示每台服务器的 GPU 型号、数量和活跃状态（如 "THEGANG2024 (8*A6000)"）
+- **服务器总览面板** — 一目了然显示每台服务器的 GPU 型号、数量和活跃状态
 - **用户级 GPU 占用** — 显示每个 GPU 进程的用户名和 LXC/Incus 容器归属
 
 ### 一键部署
