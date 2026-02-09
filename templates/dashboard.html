@@ -332,6 +332,7 @@
         .detail-carousel {
             position: relative;
             margin-top: 2px;
+            border-radius: 14px;
         }
 
         .detail-carousel::before,
@@ -360,6 +361,16 @@
         .detail-carousel.can-scroll:not(.at-start)::before { opacity: 1; }
         .detail-carousel.can-scroll:not(.at-end)::after { opacity: 1; }
 
+        .detail-carousel.can-scroll {
+            border: 1px solid rgba(88,166,255,0.26);
+            background:
+                radial-gradient(120% 140% at 0% 0%, rgba(88,166,255,0.09) 0%, rgba(88,166,255,0.02) 38%, rgba(0,0,0,0) 72%),
+                linear-gradient(transparent 95%, rgba(88,166,255,0.05) 100%);
+            box-shadow:
+                inset 0 0 0 1px rgba(88,166,255,0.08),
+                0 10px 24px rgba(0,0,0,0.22);
+        }
+
         [data-theme="light"] .detail-carousel::before {
             background: linear-gradient(90deg, var(--bg-body) 8%, rgba(240,242,245,0) 100%);
         }
@@ -383,27 +394,48 @@
             width: 34px;
             height: 34px;
             border-radius: 999px;
-            border: 1px solid var(--border);
-            background: var(--bg-card);
-            color: var(--text-secondary);
+            border: 1px solid rgba(88,166,255,0.55);
+            background: linear-gradient(180deg, rgba(88,166,255,0.28) 0%, rgba(88,166,255,0.18) 100%);
+            color: var(--blue);
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
             z-index: 5;
-            box-shadow: 0 2px 6px var(--shadow);
+            box-shadow: 0 3px 10px rgba(88,166,255,0.28);
             transition: all 0.2s;
+            overflow: hidden;
+        }
+
+        .detail-nav::after {
+            content: '';
+            position: absolute;
+            inset: -10px 45% -10px -55%;
+            transform: rotate(16deg);
+            background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.35), rgba(255,255,255,0));
+            animation: navSweep 2.2s linear infinite;
+            pointer-events: none;
         }
 
         .detail-nav:hover {
-            color: var(--text-primary);
-            border-color: var(--text-secondary);
+            color: #dceeff;
+            border-color: rgba(88,166,255,0.9);
+            background: linear-gradient(180deg, rgba(88,166,255,0.46) 0%, rgba(88,166,255,0.28) 100%);
+            box-shadow: 0 5px 14px rgba(88,166,255,0.38);
+            transform: translateY(-1px);
         }
 
         .detail-nav:disabled {
-            opacity: 0.35;
+            opacity: 0.42;
+            color: var(--text-muted);
+            border-color: var(--border);
+            background: var(--bg-card);
+            box-shadow: none;
             cursor: not-allowed;
         }
+
+        .detail-nav:disabled::after { display: none; }
+        .detail-nav:not(:disabled) { animation: navPulse 1.8s ease-in-out infinite; }
 
         .detail-nav.prev { right: 42px; }
         .detail-nav.next { right: 0; }
@@ -454,7 +486,35 @@
         .server-card:hover { border-color: var(--text-muted); }
         .server-card.focused {
             border-color: var(--blue);
-            box-shadow: 0 0 0 2px rgba(88,166,255,0.25);
+            box-shadow:
+                0 0 0 2px rgba(88,166,255,0.45),
+                0 0 22px rgba(88,166,255,0.36);
+            transform: translateY(-1px);
+            transition: box-shadow .25s ease, border-color .2s ease, transform .2s ease;
+            animation: cardFocusPulse .9s ease-in-out 1;
+        }
+
+        @keyframes navPulse {
+            0%, 100% { box-shadow: 0 3px 10px rgba(88,166,255,0.28); }
+            50% { box-shadow: 0 4px 16px rgba(88,166,255,0.48); }
+        }
+
+        @keyframes navSweep {
+            0% { transform: translateX(-180%) rotate(16deg); }
+            100% { transform: translateX(220%) rotate(16deg); }
+        }
+
+        @keyframes cardFocusPulse {
+            0% {
+                box-shadow:
+                    0 0 0 0 rgba(88,166,255,0.72),
+                    0 0 0 rgba(88,166,255,0.1);
+            }
+            100% {
+                box-shadow:
+                    0 0 0 2px rgba(88,166,255,0.45),
+                    0 0 22px rgba(88,166,255,0.36);
+            }
         }
         .server-card.offline { opacity: 0.65; }
         .server-card.maintenance { border-left: 3px solid var(--blue); }
