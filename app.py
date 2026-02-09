@@ -109,6 +109,7 @@ def init_db():
     db.execute('''CREATE TABLE IF NOT EXISTS users (
         id                  INTEGER PRIMARY KEY AUTOINCREMENT,
         username            TEXT NOT NULL UNIQUE,
+        email               TEXT DEFAULT '',
         password_hash       TEXT NOT NULL,
         role                TEXT NOT NULL DEFAULT 'user',
         can_view_processes  INTEGER DEFAULT 0,
@@ -136,6 +137,8 @@ def init_db():
         role                TEXT NOT NULL DEFAULT 'user',
         can_view_processes  INTEGER DEFAULT 0,
         server_ids          TEXT,
+        max_uses            INTEGER NOT NULL DEFAULT 1,
+        used_count          INTEGER NOT NULL DEFAULT 0,
         created_by          INTEGER,
         created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         expires_at          TIMESTAMP,
@@ -152,6 +155,10 @@ def init_db():
     )''')
     db.execute('''CREATE INDEX IF NOT EXISTS idx_user_agent_tokens_user
                   ON user_agent_tokens(user_id)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS app_settings (
+        key         TEXT PRIMARY KEY,
+        value       TEXT NOT NULL DEFAULT ''
+    )''')
 
     # --- Schema migration: servers hostname unique -> mac unique ---
     _migrate_servers_table_for_mac_identity(db)
@@ -174,6 +181,19 @@ def init_db():
     db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_servers_mac_address '
                'ON servers(mac_address) WHERE mac_address IS NOT NULL AND mac_address != ""')
     db.execute('CREATE INDEX IF NOT EXISTS idx_servers_hostname ON servers(hostname)')
+    ucols = [r[1] for r in db.execute('PRAGMA table_info(users)').fetchall()]
+    if 'email' not in ucols:
+        db.execute("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''")
+    db.execute('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)')
+    icols = [r[1] for r in db.execute('PRAGMA table_info(invites)').fetchall()]
+    if 'max_uses' not in icols:
+        db.execute('ALTER TABLE invites ADD COLUMN max_uses INTEGER NOT NULL DEFAULT 1')
+    if 'used_count' not in icols:
+        db.execute('ALTER TABLE invites ADD COLUMN used_count INTEGER NOT NULL DEFAULT 0')
+    _set_setting(db, 'registration_email_suffix_enabled',
+                 _get_setting(db, 'registration_email_suffix_enabled', '0'))
+    _set_setting(db, 'registration_email_allowed_suffixes',
+                 _get_setting(db, 'registration_email_allowed_suffixes', ''))
 
     # --- Announcements table ---
     db.execute('''CREATE TABLE IF NOT EXISTS announcements (
@@ -253,12 +273,53 @@ def _migrate_servers_table_for_mac_identity(db):
 # Auth helpers / 认证辅助
 # ---------------------------------------------------------------------------
 login_attempts: dict = {}  # ip -> [timestamp, ...]
+EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 
 def _generate_password(length=12):
     """Generate a random password / 生成随机密码"""
     alphabet = string.ascii_letters + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _normalize_email(email):
+    return (email or '').strip().lower()
+
+
+def _is_valid_email(email):
+    return bool(EMAIL_RE.match(email or ''))
+
+
+def _parse_allowed_suffixes(raw):
+    parts = re.split(r'[\s,;]+', raw or '')
+    suffixes = []
+    for p in parts:
+        s = p.strip().lower()
+        if not s:
+            continue
+        if not s.startswith('@'):
+            s = '@' + s
+        suffixes.append(s)
+    return sorted(set(suffixes))
+
+
+def _get_setting(db, key, default=''):
+    row = db.execute('SELECT value FROM app_settings WHERE key=?', (key,)).fetchone()
+    return row['value'] if row else default
+
+
+def _set_setting(db, key, value):
+    db.execute(
+        '''INSERT INTO app_settings (key, value) VALUES (?, ?)
+           ON CONFLICT(key) DO UPDATE SET value=excluded.value''',
+        (key, str(value))
+    )
+
+
+def _registration_email_policy(db):
+    enabled = _get_setting(db, 'registration_email_suffix_enabled', '0') == '1'
+    raw = _get_setting(db, 'registration_email_allowed_suffixes', '')
+    return enabled, _parse_allowed_suffixes(raw), raw
 
 
 def _hash_user_agent_token(token):
@@ -393,42 +454,74 @@ def register():
     if not invite:
         flash('Invalid invite link / 无效的邀请链接', 'error')
         return redirect(url_for('login'))
-    if invite['used_by'] is not None:
-        flash('This invite has already been used / 该邀请链接已被使用', 'error')
+    try:
+        max_uses = int(invite['max_uses'] or 1)
+    except (TypeError, ValueError):
+        max_uses = 1
+    try:
+        used_count = int(invite['used_count'] or 0)
+    except (TypeError, ValueError):
+        used_count = 0
+    if used_count >= max_uses:
+        flash('This invite has reached max users / 该邀请链接使用人数已满', 'error')
         return redirect(url_for('login'))
     if invite['expires_at'] and datetime.fromisoformat(invite['expires_at']) < datetime.now():
         flash('This invite has expired / 该邀请链接已过期', 'error')
         return redirect(url_for('login'))
+    policy_enabled, allowed_suffixes, _ = _registration_email_policy(db)
 
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
+        email = _normalize_email(request.form.get('email', ''))
         password = request.form.get('password', '')
         confirm = request.form.get('confirm', '')
 
         errors = []
         if not username or len(username) < 2:
             errors.append('Username must be at least 2 characters / 用户名至少 2 个字符')
+        if not email:
+            errors.append('Email is required / 邮箱为必填项')
+        elif not _is_valid_email(email):
+            errors.append('Invalid email format / 邮箱格式不正确')
         if not password or len(password) < 6:
             errors.append('Password must be at least 6 characters / 密码至少 6 个字符')
         if password != confirm:
             errors.append('Passwords do not match / 两次密码不一致')
 
+        if policy_enabled and allowed_suffixes:
+            if not any(email.endswith(s) for s in allowed_suffixes):
+                errors.append(
+                    'Email domain is not allowed / 邮箱后缀不在允许范围: '
+                    + ', '.join(allowed_suffixes)
+                )
+
         # Check username uniqueness
         existing = db.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
         if existing:
             errors.append('Username already taken / 用户名已被使用')
+        existing_email = db.execute(
+            'SELECT id FROM users WHERE email = ? AND email != ""',
+            (email,)
+        ).fetchone()
+        if existing_email:
+            errors.append('Email already used / 邮箱已被使用')
 
         if errors:
             for e in errors:
                 flash(e, 'error')
-            return render_template('register.html', token=token)
+            return render_template(
+                'register.html',
+                token=token,
+                email_suffix_enabled=policy_enabled,
+                allowed_suffixes=allowed_suffixes
+            )
 
         # Create user with invite permissions
         pw_hash = generate_password_hash(password)
         cursor = db.execute(
-            'INSERT INTO users (username, password_hash, role, can_view_processes, created_by) '
-            'VALUES (?, ?, ?, ?, ?)',
-            (username, pw_hash, invite['role'], invite['can_view_processes'],
+            'INSERT INTO users (username, email, password_hash, role, can_view_processes, created_by) '
+            'VALUES (?, ?, ?, ?, ?, ?)',
+            (username, email, pw_hash, invite['role'], invite['can_view_processes'],
              invite['created_by'])
         )
         new_user_id = cursor.lastrowid
@@ -441,14 +534,25 @@ def register():
                 (new_user_id, sid)
             )
 
-        # Mark invite as used
-        db.execute('UPDATE invites SET used_by = ? WHERE id = ?', (new_user_id, invite['id']))
+        # Update invite usage count
+        db.execute(
+            '''UPDATE invites
+               SET used_count = COALESCE(used_count, 0) + 1,
+                   used_by = CASE WHEN used_by IS NULL THEN ? ELSE used_by END
+               WHERE id = ?''',
+            (new_user_id, invite['id'])
+        )
         db.commit()
 
         flash('Registration successful! Please log in. / 注册成功！请登录。', 'success')
         return redirect(url_for('login'))
 
-    return render_template('register.html', token=token)
+    return render_template(
+        'register.html',
+        token=token,
+        email_suffix_enabled=policy_enabled,
+        allowed_suffixes=allowed_suffixes
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -598,6 +702,53 @@ def api_user_change_password():
     return jsonify({'status': 'ok'})
 
 
+@app.route('/api/user/profile')
+@login_required
+def api_user_profile():
+    db = get_db()
+    row = db.execute(
+        'SELECT username, email FROM users WHERE id=?',
+        (g.user['id'],)
+    ).fetchone()
+    if not row:
+        return jsonify({'error': 'User not found'}), 404
+    return jsonify({
+        'username': row['username'],
+        'email': row['email'] or '',
+    })
+
+
+@app.route('/api/user/profile', methods=['PUT'])
+@login_required
+def api_user_update_profile():
+    data = request.get_json(silent=True) or {}
+    email = _normalize_email(data.get('email', ''))
+    if not email:
+        return jsonify({'error': 'Email is required / 邮箱为必填项'}), 400
+    if not _is_valid_email(email):
+        return jsonify({'error': 'Invalid email format / 邮箱格式不正确'}), 400
+
+    db = get_db()
+    existing = db.execute(
+        'SELECT id FROM users WHERE email=? AND id != ? AND email != ""',
+        (email, g.user['id'])
+    ).fetchone()
+    if existing:
+        return jsonify({'error': 'Email already used / 邮箱已被使用'}), 409
+
+    policy_enabled, allowed_suffixes, _ = _registration_email_policy(db)
+    if policy_enabled and allowed_suffixes:
+        if not any(email.endswith(s) for s in allowed_suffixes):
+            return jsonify({
+                'error': 'Email domain is not allowed / 邮箱后缀不在允许范围: '
+                         + ', '.join(allowed_suffixes)
+            }), 400
+
+    db.execute('UPDATE users SET email=? WHERE id=?', (email, g.user['id']))
+    db.commit()
+    return jsonify({'status': 'ok'})
+
+
 @app.route('/api/user/servers/<int:server_id>/alias', methods=['PUT'])
 @login_required
 def api_user_set_server_alias(server_id):
@@ -646,6 +797,39 @@ def admin_page():
 
 
 # ---------------------------------------------------------------------------
+# Admin API — Registration settings / 注册设置
+# ---------------------------------------------------------------------------
+
+@app.route('/api/admin/settings/registration')
+@admin_required
+def api_admin_get_registration_settings():
+    db = get_db()
+    enabled, suffixes, raw = _registration_email_policy(db)
+    return jsonify({
+        'email_suffix_enabled': enabled,
+        'allowed_suffixes': suffixes,
+        'allowed_suffixes_raw': raw,
+    })
+
+
+@app.route('/api/admin/settings/registration', methods=['PUT'])
+@admin_required
+def api_admin_set_registration_settings():
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get('email_suffix_enabled'))
+    raw = (data.get('allowed_suffixes_raw') or '').strip().lower()
+    suffixes = _parse_allowed_suffixes(raw)
+    if enabled and not suffixes:
+        return jsonify({'error': 'Please provide at least one allowed suffix / 请至少填写一个后缀'}), 400
+
+    db = get_db()
+    _set_setting(db, 'registration_email_suffix_enabled', '1' if enabled else '0')
+    _set_setting(db, 'registration_email_allowed_suffixes', ','.join(suffixes))
+    db.commit()
+    return jsonify({'status': 'ok', 'allowed_suffixes': suffixes})
+
+
+# ---------------------------------------------------------------------------
 # Admin API — Users / 管理 API — 用户
 # ---------------------------------------------------------------------------
 
@@ -654,7 +838,7 @@ def admin_page():
 def api_admin_list_users():
     db = get_db()
     users = db.execute(
-        'SELECT id, username, role, can_view_processes, created_at FROM users ORDER BY id'
+        'SELECT id, username, email, role, can_view_processes, created_at FROM users ORDER BY id'
     ).fetchall()
 
     result = []
@@ -668,6 +852,7 @@ def api_admin_list_users():
         result.append({
             'id':                 u['id'],
             'username':           u['username'],
+            'email':              u['email'] or '',
             'role':               u['role'],
             'can_view_processes': u['can_view_processes'],
             'server_ids':         server_ids,
@@ -684,22 +869,33 @@ def api_admin_create_user():
         return jsonify({'error': 'Username is required'}), 400
 
     username = data['username'].strip()
+    email = _normalize_email(data.get('email', ''))
     role = data.get('role', 'user')
     can_view = 1 if data.get('can_view_processes') else 0
     server_ids = data.get('server_ids', [])
+    if not email:
+        return jsonify({'error': 'Email is required / 邮箱为必填项'}), 400
+    if not _is_valid_email(email):
+        return jsonify({'error': 'Invalid email format / 邮箱格式不正确'}), 400
 
     db = get_db()
     existing = db.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
     if existing:
         return jsonify({'error': 'Username already exists / 用户名已存在'}), 409
+    existing_email = db.execute(
+        'SELECT id FROM users WHERE email = ? AND email != ""',
+        (email,)
+    ).fetchone()
+    if existing_email:
+        return jsonify({'error': 'Email already exists / 邮箱已存在'}), 409
 
     password = _generate_password()
     pw_hash = generate_password_hash(password)
 
     cursor = db.execute(
-        'INSERT INTO users (username, password_hash, role, can_view_processes, created_by) '
-        'VALUES (?, ?, ?, ?, ?)',
-        (username, pw_hash, role, can_view, g.user['id'])
+        'INSERT INTO users (username, email, password_hash, role, can_view_processes, created_by) '
+        'VALUES (?, ?, ?, ?, ?, ?)',
+        (username, email, pw_hash, role, can_view, g.user['id'])
     )
     new_id = cursor.lastrowid
 
@@ -819,6 +1015,8 @@ def api_admin_list_invites():
         if inv['used_by']:
             u = db.execute('SELECT username FROM users WHERE id=?', (inv['used_by'],)).fetchone()
             used_by_name = u['username'] if u else None
+        max_uses = int(inv['max_uses'] or 1)
+        used_count = int(inv['used_count'] or 0)
 
         result.append({
             'id':                 inv['id'],
@@ -828,6 +1026,8 @@ def api_admin_list_invites():
             'server_ids':         json.loads(inv['server_ids']) if inv['server_ids'] else [],
             'created_at':         inv['created_at'],
             'expires_at':         inv['expires_at'],
+            'max_uses':           max_uses,
+            'used_count':         used_count,
             'used_by':            inv['used_by'],
             'used_by_name':       used_by_name,
         })
@@ -842,22 +1042,29 @@ def api_admin_create_invite():
     can_view = 1 if data.get('can_view_processes') else 0
     server_ids = data.get('server_ids', [])
     expire_hours = data.get('expire_hours', 72)
+    try:
+        max_uses = int(data.get('max_uses', 1) or 1)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'max_uses must be an integer'}), 400
+    if max_uses < 1:
+        return jsonify({'error': 'max_uses must be >= 1'}), 400
 
     token = secrets.token_urlsafe(32)
     expires_at = (datetime.now() + timedelta(hours=expire_hours)).isoformat()
 
     db = get_db()
     db.execute(
-        'INSERT INTO invites (token, role, can_view_processes, server_ids, created_by, expires_at) '
-        'VALUES (?, ?, ?, ?, ?, ?)',
-        (token, role, can_view, json.dumps(server_ids), g.user['id'], expires_at)
+        '''INSERT INTO invites
+           (token, role, can_view_processes, server_ids, max_uses, used_count, created_by, expires_at)
+           VALUES (?, ?, ?, ?, ?, 0, ?, ?)''',
+        (token, role, can_view, json.dumps(server_ids), max_uses, g.user['id'], expires_at)
     )
     db.commit()
 
     # Build full URL
     invite_url = f"{request.scheme}://{request.host}/register?token={token}"
 
-    return jsonify({'token': token, 'url': invite_url, 'expires_at': expires_at})
+    return jsonify({'token': token, 'url': invite_url, 'expires_at': expires_at, 'max_uses': max_uses})
 
 
 @app.route('/api/admin/invites/<int:invite_id>', methods=['DELETE'])

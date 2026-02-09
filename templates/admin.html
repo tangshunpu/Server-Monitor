@@ -114,6 +114,7 @@
         <button class="tab" data-tab="invites">Invites</button>
         <button class="tab" data-tab="servers">Servers</button>
         <button class="tab" data-tab="announcements">Announcements</button>
+        <button class="tab" data-tab="settings">Settings</button>
     </div>
 
     <!-- Users Tab -->
@@ -137,7 +138,7 @@
         </div>
         <div class="table-wrap">
             <table><thead><tr>
-                <th>Invite Link</th><th>Role</th><th>Procs</th><th>Servers</th><th>Expires</th><th>Status</th><th>Actions</th>
+                <th>Invite Link</th><th>Role</th><th>Procs</th><th>Servers</th><th>Uses</th><th>Expires</th><th>Status</th><th>Actions</th>
             </tr></thead><tbody id="invitesBody"></tbody></table>
         </div>
     </div>
@@ -164,6 +165,30 @@
             <table><thead><tr>
                 <th>Content</th><th>Level</th><th>Active</th><th>Created</th><th>Actions</th>
             </tr></thead><tbody id="annBody"></tbody></table>
+        </div>
+    </div>
+
+    <!-- Settings Tab -->
+    <div class="tab-content" id="tab-settings">
+        <div class="modal" style="max-width:680px;width:100%;padding:22px;">
+            <h3 style="margin-bottom:14px;">Registration Email Policy</h3>
+            <div class="checkbox-group" style="margin-bottom:12px;">
+                <input type="checkbox" id="regEmailSuffixEnabled">
+                <label for="regEmailSuffixEnabled" style="margin:0;color:var(--text-secondary);font-size:14px;">
+                    Only accept specific email suffixes during registration
+                </label>
+            </div>
+            <div class="form-group">
+                <label>Allowed suffixes (comma separated)</label>
+                <input type="text" id="regEmailSuffixes" placeholder="@company.com, @lab.org">
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:-6px;margin-bottom:14px;">
+                Example: <code>@company.com,@school.edu</code>
+            </div>
+            <div class="modal-actions" style="justify-content:flex-start;margin-top:0;">
+                <button class="btn btn-primary" onclick="saveRegistrationSettings()">Save Settings</button>
+                <span id="settingsMsg" style="font-size:12px;color:var(--text-secondary);"></span>
+            </div>
         </div>
     </div>
 </main>
@@ -239,6 +264,10 @@
             <label>Username</label>
             <input type="text" id="umUsername" placeholder="username">
         </div>
+        <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="umEmail" placeholder="user@example.com">
+        </div>
         <div class="form-row">
             <div class="form-group">
                 <label>Role</label>
@@ -278,6 +307,10 @@
         <div class="form-group">
             <label>Expires in (hours)</label>
             <input type="number" id="imExpiry" value="72" min="1" max="8760">
+        </div>
+        <div class="form-group">
+            <label>Max users / 最大人数</label>
+            <input type="number" id="imMaxUses" value="1" min="1" max="10000">
         </div>
         <div class="form-group">
             <label>Server Access</label>
@@ -406,8 +439,9 @@ function loadUsers() {
                 const names = u.server_ids.map(sid => { const s=allServers.find(x=>x.id===sid); return s?s.hostname:'#'+sid; });
                 serverHTML = '<div class="server-tags">'+names.map(n=>'<span class="server-tag">'+n+'</span>').join('')+'</div>';
             }
+            const userLabel = `<div><strong>${u.username}</strong></div><div style="font-size:12px;color:var(--text-secondary)">${u.email || '-'}</div>`;
             return `<tr>
-                <td><strong>${u.username}</strong></td>
+                <td>${userLabel}</td>
                 <td>${roleBadge}</td>
                 <td>${procsBadge}</td>
                 <td>${serverHTML}</td>
@@ -426,21 +460,23 @@ function loadInvites() {
     api('/api/admin/invites').then(invites => {
         document.getElementById('inviteCountLabel').textContent = invites.length + ' invite(s)';
         const tb = document.getElementById('invitesBody');
-        if(invites.length===0) { tb.innerHTML='<tr><td colspan="7" class="empty-row">No invites</td></tr>'; return; }
+        if(invites.length===0) { tb.innerHTML='<tr><td colspan="8" class="empty-row">No invites</td></tr>'; return; }
         tb.innerHTML = invites.map(inv => {
             const url = location.origin+'/register?token='+inv.token;
             const roleBadge = inv.role==='admin'?'<span class="badge badge-admin">Admin</span>':'<span class="badge badge-user">User</span>';
             const procsBadge = inv.can_view_processes?'Yes':'No';
             const srvNames = (inv.server_ids||[]).map(sid=>{const s=allServers.find(x=>x.id===sid);return s?s.hostname:'#'+sid;}).join(', ')||'None';
+            const uses = `${inv.used_count || 0}/${inv.max_uses || 1}`;
             let statusBadge;
-            if(inv.used_by) statusBadge = `<span class="badge badge-used">Used by ${inv.used_by_name||'#'+inv.used_by}</span>`;
-            else if(inv.expires_at && new Date(inv.expires_at)<new Date()) statusBadge = '<span class="badge badge-expired">Expired</span>';
+            if(inv.expires_at && new Date(inv.expires_at)<new Date()) statusBadge = '<span class="badge badge-expired">Expired</span>';
+            else if((inv.used_count || 0) >= (inv.max_uses || 1)) statusBadge = '<span class="badge badge-used">Full</span>';
             else statusBadge = '<span class="badge badge-active">Active</span>';
             return `<tr>
                 <td><span class="invite-url" onclick="copyText('${url}')" title="Click to copy">${url}</span></td>
                 <td>${roleBadge}</td>
                 <td>${procsBadge}</td>
                 <td style="font-size:12px">${srvNames}</td>
+                <td style="font-size:12px">${uses}</td>
                 <td style="font-size:12px;color:var(--text-muted)">${fmtTime(inv.expires_at)}</td>
                 <td>${statusBadge}</td>
                 <td><button class="btn btn-sm btn-danger" onclick="deleteInvite(${inv.id})">Revoke</button></td>
@@ -475,8 +511,11 @@ function openCreateUser() {
     editingUserId = null;
     document.getElementById('userModalTitle').textContent = 'Create User';
     document.getElementById('userModalBtn').textContent = 'Create';
+    document.getElementById('userModalBtn').style.display = '';
     document.getElementById('umUsername').value = '';
+    document.getElementById('umEmail').value = '';
     document.getElementById('umUsername').disabled = false;
+    document.getElementById('umEmail').disabled = false;
     document.getElementById('umRole').value = 'user';
     document.getElementById('umProcs').value = '0';
     document.getElementById('userResult').innerHTML = '';
@@ -491,8 +530,11 @@ function openEditUser(uid) {
         editingUserId = uid;
         document.getElementById('userModalTitle').textContent = 'Edit User: '+u.username;
         document.getElementById('userModalBtn').textContent = 'Save';
+        document.getElementById('userModalBtn').style.display = '';
         document.getElementById('umUsername').value = u.username;
+        document.getElementById('umEmail').value = u.email || '';
         document.getElementById('umUsername').disabled = true;
+        document.getElementById('umEmail').disabled = true;
         document.getElementById('umRole').value = u.role;
         document.getElementById('umProcs').value = u.can_view_processes?'1':'0';
         document.getElementById('userResult').innerHTML = '';
@@ -503,6 +545,7 @@ function openEditUser(uid) {
 
 function submitUser() {
     const username = document.getElementById('umUsername').value.trim();
+    const email = document.getElementById('umEmail').value.trim();
     const role = document.getElementById('umRole').value;
     const canView = document.getElementById('umProcs').value === '1';
     const serverIds = getSelectedServerIds('umServers');
@@ -517,8 +560,9 @@ function submitUser() {
         });
     } else {
         if(!username) { alert('Username is required'); return; }
+        if(!email) { alert('Email is required'); return; }
         api('/api/admin/users', {
-            method:'POST', body:JSON.stringify({username, role, can_view_processes:canView, server_ids:serverIds})
+            method:'POST', body:JSON.stringify({username, email, role, can_view_processes:canView, server_ids:serverIds})
         }).then(r => {
             if(r.error) { alert(r.error); return; }
             document.getElementById('userResult').innerHTML = `
@@ -579,6 +623,7 @@ function openCreateInvite() {
     document.getElementById('imRole').value = 'user';
     document.getElementById('imProcs').value = '0';
     document.getElementById('imExpiry').value = '72';
+    document.getElementById('imMaxUses').value = '1';
     document.getElementById('inviteResult').innerHTML = '';
     document.getElementById('inviteModalBtn').style.display = '';
     renderServerChips('imServers', []);
@@ -589,10 +634,11 @@ function submitInvite() {
     const role = document.getElementById('imRole').value;
     const canView = document.getElementById('imProcs').value === '1';
     const expiry = parseInt(document.getElementById('imExpiry').value) || 72;
+    const maxUses = parseInt(document.getElementById('imMaxUses').value) || 1;
     const serverIds = getSelectedServerIds('imServers');
 
     api('/api/admin/invites', {
-        method:'POST', body:JSON.stringify({role, can_view_processes:canView, expire_hours:expiry, server_ids:serverIds})
+        method:'POST', body:JSON.stringify({role, can_view_processes:canView, expire_hours:expiry, max_uses:maxUses, server_ids:serverIds})
     }).then(r => {
         if(r.error) { alert(r.error); return; }
         document.getElementById('inviteResult').innerHTML = `
@@ -608,6 +654,33 @@ function submitInvite() {
 function deleteInvite(id) {
     if(!confirm('Revoke this invite?')) return;
     api('/api/admin/invites/'+id, {method:'DELETE'}).then(() => loadInvites());
+}
+
+function loadRegistrationSettings() {
+    api('/api/admin/settings/registration').then(r => {
+        if (r.error) return;
+        document.getElementById('regEmailSuffixEnabled').checked = !!r.email_suffix_enabled;
+        document.getElementById('regEmailSuffixes').value = (r.allowed_suffixes || []).join(', ');
+    });
+}
+
+function saveRegistrationSettings() {
+    const enabled = document.getElementById('regEmailSuffixEnabled').checked;
+    const raw = document.getElementById('regEmailSuffixes').value.trim();
+    api('/api/admin/settings/registration', {
+        method:'PUT',
+        body:JSON.stringify({email_suffix_enabled: enabled, allowed_suffixes_raw: raw})
+    }).then(r => {
+        const msg = document.getElementById('settingsMsg');
+        if(r.error) {
+            msg.style.color = 'var(--red)';
+            msg.textContent = r.error;
+            return;
+        }
+        msg.style.color = 'var(--green)';
+        msg.textContent = 'Saved';
+        document.getElementById('regEmailSuffixes').value = (r.allowed_suffixes || []).join(', ');
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -774,6 +847,7 @@ function loadAll() {
     loadInvites();
     loadServers();
     loadAnnouncements();
+    loadRegistrationSettings();
 }
 loadAll();
 </script>

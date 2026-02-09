@@ -224,6 +224,14 @@
     </section>
 
     <section class="panel">
+        <h2>My Email</h2>
+        <p class="hint">Email is required for all accounts.</p>
+        <div class="form-row"><input type="email" id="profileEmail" placeholder="your@email.com"></div>
+        <button class="btn btn-primary" onclick="updateProfileEmail()">Save Email</button>
+        <div id="profileMessage" class="msg"></div>
+    </section>
+
+    <section class="panel">
         <h2>My Servers</h2>
         <p class="hint">These are the servers currently visible to your account.</p>
         <div class="server-list" id="serverList">Loading...</div>
@@ -349,6 +357,29 @@ function changePassword() {
     });
 }
 
+function loadProfile() {
+    api('/api/user/profile').then(r => {
+        if (r && !r.error) {
+            document.getElementById('profileEmail').value = r.email || '';
+        }
+    });
+}
+
+function updateProfileEmail() {
+    const email = document.getElementById('profileEmail').value.trim();
+    if (!email) {
+        setMsg('profileMessage', 'Email is required / 邮箱为必填项', false);
+        return;
+    }
+    api('/api/user/profile', {
+        method:'PUT',
+        body: JSON.stringify({email})
+    }).then(r => {
+        if (r.error) { setMsg('profileMessage', r.error, false); return; }
+        setMsg('profileMessage', 'Email updated / 邮箱已更新', true);
+    });
+}
+
 function loadMyServers() {
     api('/api/servers').then(rows => {
         const el = document.getElementById('serverList');
@@ -405,6 +436,7 @@ document.getElementById('themeToggle').onclick = () => {
 };
 
 loadTokens();
+loadProfile();
 loadMyServers();
 </script>
 </body>
