@@ -1,0 +1,18 @@
+# ============================================
+# Server Monitor Agent - Client Configuration
+# Server Monitor Agent - 客户端配置文件
+# ============================================
+# Copy this file to each monitored server and
+# update server_url to point to your monitor server.
+# 将此文件复制到每台被监控的服务器上，
+# 并修改 server_url 为监控主服务器的地址。
+
+# Monitor server URL / 监控主服务器地址
+server_url: "http://YOUR_MONITOR_SERVER_IP:5100"
+
+# Auth token (must match agent.token in the main server's config.yaml)
+# 认证令牌（必须与主服务器 config.yaml 中的 agent.token 一致）
+token: "change-this-to-a-secure-token"
+
+# Reporting interval in seconds / 上报间隔（秒）
+interval: 30

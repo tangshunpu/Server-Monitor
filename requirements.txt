@@ -1,0 +1,8 @@
+# === Main server (app.py) dependencies / 主服务器 (app.py) 依赖 ===
+flask>=3.0
+pyyaml>=6.0
+
+# === Agent (agent.py) dependencies / Agent (agent.py) 依赖 ===
+psutil>=5.9
+requests>=2.31
+pyyaml>=6.0

@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Monitor — Dashboard</title>
+    <style>
+        /* ===== Reset & Variables ===== */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg-body:      #0d1117;
+            --bg-card:      #161b22;
+            --bg-inner:     #0d1117;
+            --bg-hover:     #1c2128;
+            --border:       #30363d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted:   #484f58;
+            --green:        #3fb950;
+            --yellow:       #d29922;
+            --red:          #f85149;
+            --blue:         #58a6ff;
+            --purple:       #bc8cff;
+            --orange:       #f0883e;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        /* ===== Navbar ===== */
+        .navbar {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 0 24px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .navbar-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .navbar-logo {
+            font-size: 20px;
+        }
+
+        .navbar-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .navbar-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .server-count {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .count-badge {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--green);
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 12px;
+        }
+
+        .count-badge.offline {
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--red);
+        }
+
+        .refresh-info {
+            font-size: 12px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .refresh-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .logout-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .logout-btn:hover {
+            color: var(--text-primary);
+            border-color: var(--text-secondary);
+        }
+
+        /* ===== Main Content ===== */
+        .main {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state h2 {
+            font-size: 20px;
+            margin-bottom: 12px;
+            color: var(--text-primary);
+        }
+
+        .empty-state p {
+            font-size: 14px;
+            line-height: 1.8;
+        }
+
+        .empty-state code {
+            background: var(--bg-inner);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 13px;
+            color: var(--blue);
+        }
+
+        /* ===== Server Grid ===== */
+        .server-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+            gap: 20px;
+        }
+
+        @media (max-width: 540px) {
+            .server-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* ===== Server Card ===== */
+        .server-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+
+        .server-card:hover {
+            border-color: var(--text-muted);
+        }
+
+        .server-card.offline {
+            opacity: 0.65;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .card-header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .status-dot.online { background: var(--green); box-shadow: 0 0 8px rgba(63, 185, 80, 0.5); }
+        .status-dot.offline { background: var(--red); }
+
+        .server-name {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .server-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-icon {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 16px;
+            transition: all 0.2s;
+        }
+
+        .btn-icon:hover {
+            color: var(--red);
+            background: rgba(248, 81, 73, 0.1);
+        }
+
+        /* ===== Metrics Section ===== */
+        .card-body {
+            padding: 16px 20px;
+        }
+
+        .metrics-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .metric-item {
+            flex: 1;
+        }
+
+        .metric-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 6px;
+        }
+
+        .metric-name {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .metric-value {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .progress-bar {
+            height: 8px;
+            background: var(--bg-inner);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.6s ease;
+        }
+
+        .progress-fill.green  { background: var(--green); }
+        .progress-fill.yellow { background: var(--yellow); }
+        .progress-fill.red    { background: var(--red); }
+
+        .metric-detail {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* ===== Network ===== */
+        .network-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .network-item {
+            flex: 1;
+            background: var(--bg-inner);
+            border-radius: 6px;
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .network-icon {
+            font-size: 14px;
+        }
+
+        .network-info {
+            font-size: 12px;
+        }
+
+        .network-label {
+            color: var(--text-muted);
+        }
+
+        .network-value {
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        /* ===== GPU Section ===== */
+        .gpu-section {
+            border-top: 1px solid var(--border);
+            padding-top: 16px;
+        }
+
+        .gpu-section-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .gpu-count {
+            background: rgba(188, 140, 255, 0.15);
+            color: var(--purple);
+            padding: 1px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+        }
+
+        .gpu-card {
+            background: var(--bg-inner);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-bottom: 10px;
+        }
+
+        .gpu-card:last-child {
+            margin-bottom: 0;
+        }
+
+        .gpu-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .gpu-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .gpu-index {
+            font-size: 11px;
+            color: var(--text-muted);
+            background: var(--bg-card);
+            padding: 1px 8px;
+            border-radius: 4px;
+        }
+
+        .gpu-stats {
+            display: flex;
+            gap: 10px;
+            font-size: 11px;
+        }
+
+        .gpu-stat {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .gpu-stat-icon {
+            font-size: 12px;
+        }
+
+        .gpu-stat-value {
+            font-weight: 600;
+        }
+
+        .temp-green  { color: var(--green); }
+        .temp-yellow { color: var(--yellow); }
+        .temp-red    { color: var(--red); }
+
+        .gpu-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .gpu-metric-item .metric-name {
+            font-size: 11px;
+        }
+
+        .gpu-metric-item .progress-bar {
+            height: 6px;
+        }
+
+        .gpu-metric-item .metric-value {
+            font-size: 11px;
+        }
+
+        .gpu-metric-item .metric-detail {
+            font-size: 10px;
+        }
+
+        /* ===== GPU Processes ===== */
+        .gpu-processes {
+            margin-top: 10px;
+            border-top: 1px solid var(--border);
+            padding-top: 8px;
+        }
+
+        .gpu-processes-title {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .process-list {
+            font-size: 11px;
+        }
+
+        .process-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 3px 0;
+            color: var(--text-secondary);
+        }
+
+        .process-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 250px;
+        }
+
+        .process-pid {
+            color: var(--text-muted);
+            margin: 0 8px;
+            flex-shrink: 0;
+        }
+
+        .process-mem {
+            color: var(--orange);
+            font-weight: 500;
+            flex-shrink: 0;
+        }
+
+        .no-gpu {
+            text-align: center;
+            padding: 12px;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        /* ===== Card Footer ===== */
+        .card-footer {
+            padding: 10px 20px;
+            border-top: 1px solid var(--border);
+            font-size: 11px;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* ===== No Metrics ===== */
+        .no-metrics {
+            padding: 24px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        /* ===== Confirmation Dialog ===== */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 400px;
+            width: 90%;
+            text-align: center;
+        }
+
+        .modal-box h3 {
+            margin-bottom: 12px;
+            font-size: 16px;
+        }
+
+        .modal-box p {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .modal-btn {
+            padding: 8px 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            transition: all 0.2s;
+        }
+
+        .modal-btn.cancel {
+            background: transparent;
+            color: var(--text-secondary);
+        }
+
+        .modal-btn.cancel:hover {
+            background: var(--bg-hover);
+        }
+
+        .modal-btn.danger {
+            background: var(--red);
+            color: #fff;
+            border-color: var(--red);
+        }
+
+        .modal-btn.danger:hover {
+            background: #da3633;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar">
+    <div class="navbar-left">
+        <span class="navbar-logo">&#x1F5A5;</span>
+        <span class="navbar-title">Server Monitor</span>
+    </div>
+    <div class="navbar-right">
+        <div class="server-count" id="serverCount"></div>
+        <div class="refresh-info">
+            <span class="refresh-dot"></span>
+            <span id="refreshTimer">自动刷新 30s</span>
+        </div>
+        <a href="/logout" class="logout-btn">退出登录</a>
+    </div>
+</nav>
+
+<!-- Main Content -->
+<main class="main">
+    <div id="dashboard"></div>
+</main>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal-overlay" id="deleteModal">
+    <div class="modal-box">
+        <h3>确认删除</h3>
+        <p>确定要删除服务器 <strong id="deleteServerName"></strong> 吗？<br>所有历史数据将被清除。</p>
+        <div class="modal-actions">
+            <button class="modal-btn cancel" onclick="closeDeleteModal()">取消</button>
+            <button class="modal-btn danger" id="confirmDeleteBtn">删除</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Data & State
+// ---------------------------------------------------------------------------
+let serverData = {{ servers | tojson }};
+let refreshInterval = 30;
+let countdown = refreshInterval;
+let deleteServerId = null;
+
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+
+function getBarColor(percent) {
+    if (percent >= 80) return 'red';
+    if (percent >= 60) return 'yellow';
+    return 'green';
+}
+
+function getTempClass(temp) {
+    if (temp === null || temp === undefined) return 'temp-green';
+    if (temp >= 80) return 'temp-red';
+    if (temp >= 65) return 'temp-yellow';
+    return 'temp-green';
+}
+
+function fmt(val, unit) {
+    if (val === null || val === undefined) return 'N/A';
+    return val + (unit || '');
+}
+
+function fmtSize(gb) {
+    if (gb === null || gb === undefined) return 'N/A';
+    return gb.toFixed(1) + ' GB';
+}
+
+function fmtTime(ts) {
+    if (!ts) return 'N/A';
+    const d = new Date(ts);
+    return d.toLocaleString('zh-CN', { hour12: false });
+}
+
+function renderGpuProcesses(processes) {
+    if (!processes || processes.length === 0) return '';
+    let rows = processes.map(p => {
+        const name = p.process_name ? p.process_name.split('/').pop() : 'unknown';
+        return `<div class="process-row">
+            <span class="process-name" title="${p.process_name || ''}">${name}</span>
+            <span class="process-pid">PID ${p.pid}</span>
+            <span class="process-mem">${fmt(p.memory_used, ' MiB')}</span>
+        </div>`;
+    }).join('');
+    return `<div class="gpu-processes">
+        <div class="gpu-processes-title">运行中的进程 (${processes.length})</div>
+        <div class="process-list">${rows}</div>
+    </div>`;
+}
+
+function renderGpuCard(gpu) {
+    const util = gpu.gpu_utilization ?? 0;
+    const memUsed = gpu.memory_used ?? 0;
+    const memTotal = gpu.memory_total ?? 1;
+    const memPct = memTotal > 0 ? (memUsed / memTotal * 100).toFixed(1) : 0;
+    const temp = gpu.temperature;
+    const power = gpu.power_draw;
+    const powerLimit = gpu.power_limit;
+
+    return `<div class="gpu-card">
+        <div class="gpu-header">
+            <span class="gpu-name">${gpu.name || 'GPU'}</span>
+            <div class="gpu-stats">
+                <span class="gpu-stat">
+                    <span class="gpu-stat-icon">&#x1F321;</span>
+                    <span class="gpu-stat-value ${getTempClass(temp)}">${fmt(temp, '°C')}</span>
+                </span>
+                <span class="gpu-stat">
+                    <span class="gpu-stat-icon">&#x26A1;</span>
+                    <span class="gpu-stat-value">${fmt(power, 'W')}${powerLimit ? ' / ' + powerLimit + 'W' : ''}</span>
+                </span>
+                <span class="gpu-index">GPU ${gpu.index}</span>
+            </div>
+        </div>
+        <div class="gpu-metrics">
+            <div class="gpu-metric-item">
+                <div class="metric-label">
+                    <span class="metric-name">GPU 利用率</span>
+                    <span class="metric-value">${fmt(util, '%')}</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill ${getBarColor(util)}" style="width:${util}%"></div>
+                </div>
+            </div>
+            <div class="gpu-metric-item">
+                <div class="metric-label">
+                    <span class="metric-name">显存</span>
+                    <span class="metric-value">${memUsed} / ${memTotal} MiB</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill ${getBarColor(parseFloat(memPct))}" style="width:${memPct}%"></div>
+                </div>
+                <div class="metric-detail">${memPct}% 已使用</div>
+            </div>
+        </div>
+        ${renderGpuProcesses(gpu.processes)}
+    </div>`;
+}
+
+function renderServerCard(server) {
+    const s = server;
+    const m = s.metrics;
+    const isOnline = s.status === 'online';
+
+    let metricsHTML = '';
+    if (m) {
+        const gpuSection = m.gpu_data && m.gpu_data.length > 0
+            ? `<div class="gpu-section">
+                <div class="gpu-section-title">
+                    &#x1F3AE; GPU 状态
+                    <span class="gpu-count">${m.gpu_data.length} 块</span>
+                </div>
+                ${m.gpu_data.map(renderGpuCard).join('')}
+               </div>`
+            : `<div class="gpu-section"><div class="no-gpu">未检测到 GPU</div></div>`;
+
+        metricsHTML = `
+        <div class="card-body">
+            <div class="metrics-row">
+                <div class="metric-item">
+                    <div class="metric-label">
+                        <span class="metric-name">CPU</span>
+                        <span class="metric-value">${fmt(m.cpu_percent, '%')}</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill ${getBarColor(m.cpu_percent || 0)}" style="width:${m.cpu_percent || 0}%"></div>
+                    </div>
+                    <div class="metric-detail">${fmt(m.cpu_count)} 核心</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-label">
+                        <span class="metric-name">内存</span>
+                        <span class="metric-value">${fmt(m.memory_percent, '%')}</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill ${getBarColor(m.memory_percent || 0)}" style="width:${m.memory_percent || 0}%"></div>
+                    </div>
+                    <div class="metric-detail">${fmtSize(m.memory_used)} / ${fmtSize(m.memory_total)}</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-label">
+                        <span class="metric-name">磁盘</span>
+                        <span class="metric-value">${fmt(m.disk_percent, '%')}</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill ${getBarColor(m.disk_percent || 0)}" style="width:${m.disk_percent || 0}%"></div>
+                    </div>
+                    <div class="metric-detail">${fmtSize(m.disk_used)} / ${fmtSize(m.disk_total)}</div>
+                </div>
+            </div>
+            <div class="network-row">
+                <div class="network-item">
+                    <span class="network-icon">&#x2B06;</span>
+                    <div class="network-info">
+                        <span class="network-label">发送 </span>
+                        <span class="network-value">${fmtSize(m.network_sent)}</span>
+                    </div>
+                </div>
+                <div class="network-item">
+                    <span class="network-icon">&#x2B07;</span>
+                    <div class="network-info">
+                        <span class="network-label">接收 </span>
+                        <span class="network-value">${fmtSize(m.network_recv)}</span>
+                    </div>
+                </div>
+            </div>
+            ${gpuSection}
+        </div>
+        <div class="card-footer">
+            <span>数据时间: ${fmtTime(m.timestamp)}</span>
+            <span>${s.os_info || ''}</span>
+        </div>`;
+    } else {
+        metricsHTML = '<div class="no-metrics">等待 Agent 上报数据...</div>';
+    }
+
+    return `<div class="server-card ${isOnline ? '' : 'offline'}">
+        <div class="card-header">
+            <div class="card-header-left">
+                <span class="status-dot ${isOnline ? 'online' : 'offline'}"></span>
+                <div>
+                    <div class="server-name">${s.hostname}</div>
+                    <div class="server-meta">${s.ip || 'IP 未知'} · 最后在线: ${fmtTime(s.last_seen)}</div>
+                </div>
+            </div>
+            <div class="card-actions">
+                <button class="btn-icon" title="删除服务器" onclick="openDeleteModal(${s.id}, '${s.hostname}')">&#x1F5D1;</button>
+            </div>
+        </div>
+        ${metricsHTML}
+    </div>`;
+}
+
+function renderDashboard(data) {
+    const container = document.getElementById('dashboard');
+    const countEl = document.getElementById('serverCount');
+
+    if (!data || data.length === 0) {
+        container.innerHTML = `<div class="empty-state">
+            <h2>暂无服务器</h2>
+            <p>请在需要监控的服务器上部署 Agent 并启动：<br><br>
+            <code>pip install psutil requests pyyaml</code><br>
+            <code>python agent.py -c agent_config.yaml</code></p>
+        </div>`;
+        countEl.innerHTML = '';
+        return;
+    }
+
+    const onlineCount = data.filter(s => s.status === 'online').length;
+    const offlineCount = data.length - onlineCount;
+
+    countEl.innerHTML = `
+        <span class="count-badge">${onlineCount} 在线</span>
+        ${offlineCount > 0 ? `<span class="count-badge offline">${offlineCount} 离线</span>` : ''}
+        <span>共 ${data.length} 台</span>`;
+
+    container.innerHTML = `<div class="server-grid">${data.map(renderServerCard).join('')}</div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Auto Refresh
+// ---------------------------------------------------------------------------
+
+function refreshData() {
+    fetch('/api/servers')
+        .then(r => {
+            if (r.status === 401 || r.redirected) {
+                window.location.href = '/login';
+                return null;
+            }
+            return r.json();
+        })
+        .then(data => {
+            if (data) {
+                serverData = data;
+                renderDashboard(data);
+            }
+        })
+        .catch(err => console.error('Refresh error:', err));
+}
+
+function updateCountdown() {
+    countdown--;
+    if (countdown <= 0) {
+        countdown = refreshInterval;
+        refreshData();
+    }
+    document.getElementById('refreshTimer').textContent = `自动刷新 ${countdown}s`;
+}
+
+// ---------------------------------------------------------------------------
+// Delete Modal
+// ---------------------------------------------------------------------------
+
+function openDeleteModal(id, name) {
+    deleteServerId = id;
+    document.getElementById('deleteServerName').textContent = name;
+    document.getElementById('deleteModal').classList.add('active');
+}
+
+function closeDeleteModal() {
+    deleteServerId = null;
+    document.getElementById('deleteModal').classList.remove('active');
+}
+
+document.getElementById('confirmDeleteBtn').addEventListener('click', () => {
+    if (deleteServerId === null) return;
+    fetch(`/api/servers/${deleteServerId}`, { method: 'DELETE' })
+        .then(r => r.json())
+        .then(() => {
+            closeDeleteModal();
+            refreshData();
+        })
+        .catch(err => {
+            console.error('Delete error:', err);
+            closeDeleteModal();
+        });
+});
+
+// Close modal on overlay click
+document.getElementById('deleteModal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeDeleteModal();
+});
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+renderDashboard(serverData);
+setInterval(updateCountdown, 1000);
+</script>
+</body>
+</html>

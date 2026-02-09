@@ -1,0 +1,29 @@
+# ============================================
+# Server Monitor - Main Server Configuration
+# Server Monitor - 主服务器配置文件
+# ============================================
+# WARNING: This file contains sensitive information.
+#          Make sure to set file permissions to 600.
+# 警告: 此文件包含敏感信息，请确保文件权限为 600
+#       chmod 600 config.yaml
+
+server:
+  host: "0.0.0.0"
+  port: 5100
+  # Flask session secret key / Flask session 密钥
+  secret_key: "please-change-this-to-a-random-secret-string"
+  debug: false
+
+# Admin login password (loaded only from this file; never exposed via the web interface)
+# 管理员登录密码（仅从此文件加载，Web 界面不会暴露任何密码信息）
+auth:
+  password: "admin123"
+
+# Agent reporting auth token (agents on each server must use the same token)
+# Agent 上报认证令牌（部署在各服务器上的 agent 需要配置相同的 token）
+agent:
+  token: "change-this-to-a-secure-token"
+
+# Data retention settings / 数据保留设置
+data:
+  retention_days: 30

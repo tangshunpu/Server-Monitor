@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""
+Server Monitor Agent
+Run this script on each monitored server to periodically report system status
+to the central monitor server.
+在每台被监控的服务器上运行此脚本，定期将系统状态上报到监控主服务器。
+
+Usage / 用法:
+    python agent.py -c agent_config.yaml
+    python agent.py --config agent_config.yaml --interval 60
+"""
+
+import os
+import sys
+import time
+import json
+import socket
+import platform
+import subprocess
+import argparse
+import logging
+
+import psutil
+import requests
+import yaml
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+)
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Helper / 辅助函数
+# ---------------------------------------------------------------------------
+
+def safe_float(val):
+    """Safely convert nvidia-smi output to float, handling [N/A] etc.
+    将 nvidia-smi 输出的值安全转换为 float，处理 [N/A] 等情况"""
+    if val is None:
+        return None
+    val = str(val).strip()
+    if val in ('[N/A]', 'N/A', '[Not Supported]', 'Not Supported', ''):
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# GPU Info Collection (via nvidia-smi) / GPU 信息采集（通过 nvidia-smi）
+# ---------------------------------------------------------------------------
+
+def get_gpu_info():
+    """Get GPU info and process list via nvidia-smi.
+    通过 nvidia-smi 获取 GPU 信息和进程列表。"""
+    gpus = []
+    try:
+        # 1) Basic GPU info / GPU 基本信息
+        result = subprocess.run(
+            [
+                'nvidia-smi',
+                '--query-gpu=index,name,temperature.gpu,utilization.gpu,'
+                'memory.total,memory.used,memory.free,utilization.memory,'
+                'power.draw,power.limit,gpu_bus_id',
+                '--format=csv,noheader,nounits',
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return gpus
+
+        for line in result.stdout.strip().split('\n'):
+            if not line.strip():
+                continue
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) >= 11:
+                gpus.append({
+                    'index':              int(parts[0]),
+                    'name':               parts[1],
+                    'temperature':        safe_float(parts[2]),
+                    'gpu_utilization':    safe_float(parts[3]),
+                    'memory_total':       safe_float(parts[4]),
+                    'memory_used':        safe_float(parts[5]),
+                    'memory_free':        safe_float(parts[6]),
+                    'memory_utilization': safe_float(parts[7]),
+                    'power_draw':         safe_float(parts[8]),
+                    'power_limit':        safe_float(parts[9]),
+                    'bus_id':             parts[10],
+                    'processes':          [],
+                })
+
+        # 2) Processes running on GPU / GPU 上运行的进程
+        result2 = subprocess.run(
+            [
+                'nvidia-smi',
+                '--query-compute-apps=gpu_bus_id,pid,used_memory,process_name',
+                '--format=csv,noheader,nounits',
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result2.returncode == 0 and result2.stdout.strip():
+            bus_id_map = {g['bus_id']: i for i, g in enumerate(gpus)}
+            for line in result2.stdout.strip().split('\n'):
+                if not line.strip():
+                    continue
+                parts = [p.strip() for p in line.split(',')]
+                if len(parts) >= 4:
+                    idx = bus_id_map.get(parts[0])
+                    if idx is not None:
+                        gpus[idx]['processes'].append({
+                            'pid':          int(parts[1]),
+                            'memory_used':  safe_float(parts[2]),
+                            'process_name': parts[3],
+                        })
+
+    except FileNotFoundError:
+        # nvidia-smi not found, skip GPU monitoring
+        # nvidia-smi 未找到，跳过 GPU 监控
+        logger.info("nvidia-smi not found, skipping GPU monitoring / nvidia-smi 未找到，跳过 GPU 监控")
+    except subprocess.TimeoutExpired:
+        logger.warning("nvidia-smi timed out / nvidia-smi 超时")
+    except Exception as e:
+        logger.warning(f"GPU info collection error / GPU 信息采集异常: {e}")
+
+    return gpus
+
+
+# ---------------------------------------------------------------------------
+# System Metrics Collection / 系统指标采集
+# ---------------------------------------------------------------------------
+
+def collect_metrics():
+    """Collect all system metrics from the current server.
+    采集当前服务器的全部系统指标。"""
+
+    # CPU
+    cpu_percent = psutil.cpu_percent(interval=1)
+    cpu_count = psutil.cpu_count()
+
+    # Memory / 内存
+    mem = psutil.virtual_memory()
+
+    # Disk (root partition) / 磁盘（根分区）
+    disk = psutil.disk_usage('/')
+
+    # Network / 网络
+    net = psutil.net_io_counters()
+
+    # GPU
+    gpu_data = get_gpu_info()
+
+    # Operating system / 操作系统
+    os_info = f"{platform.system()} {platform.release()}"
+
+    # Local IP / 本机 IP
+    ip = 'unknown'
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        pass
+
+    return {
+        'hostname':       socket.gethostname(),
+        'ip':             ip,
+        'os_info':        os_info,
+        'cpu_percent':    cpu_percent,
+        'cpu_count':      cpu_count,
+        'memory_total':   round(mem.total / (1024 ** 3), 2),
+        'memory_used':    round(mem.used / (1024 ** 3), 2),
+        'memory_percent': mem.percent,
+        'disk_total':     round(disk.total / (1024 ** 3), 2),
+        'disk_used':      round(disk.used / (1024 ** 3), 2),
+        'disk_percent':   disk.percent,
+        'gpu_data':       gpu_data,
+        'network_sent':   round(net.bytes_sent / (1024 ** 3), 2),
+        'network_recv':   round(net.bytes_recv / (1024 ** 3), 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main loop / 主循环
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(description='Server Monitor Agent')
+    parser.add_argument('-c', '--config', default='agent_config.yaml',
+                        help='Config file path (default: agent_config.yaml) / '
+                             '配置文件路径（默认: agent_config.yaml）')
+    parser.add_argument('-i', '--interval', type=int, default=None,
+                        help='Reporting interval in seconds (overrides config) / '
+                             '上报间隔秒数（覆盖配置文件）')
+    args = parser.parse_args()
+
+    # Load config / 加载配置
+    config_path = args.config
+    if not os.path.isabs(config_path):
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config_path)
+
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+
+    server_url = config['server_url'].rstrip('/')
+    token = config['token']
+    interval = args.interval or config.get('interval', 30)
+
+    logger.info(f"Agent started — reporting to: {server_url}, interval: {interval}s / "
+                f"Agent 启动 — 上报地址: {server_url}, 间隔: {interval}s")
+
+    while True:
+        try:
+            metrics = collect_metrics()
+            resp = requests.post(
+                f"{server_url}/api/report",
+                json=metrics,
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                logger.info(f"Report OK (CPU: {metrics['cpu_percent']}%, "
+                            f"MEM: {metrics['memory_percent']}%, "
+                            f"GPUs: {len(metrics['gpu_data'])}) / 上报成功")
+            else:
+                logger.warning(f"Report failed / 上报失败: HTTP {resp.status_code} — {resp.text}")
+        except requests.ConnectionError:
+            logger.error(f"Cannot connect to {server_url} / 无法连接到 {server_url}")
+        except Exception as e:
+            logger.error(f"Report error / 上报异常: {e}")
+
+        time.sleep(interval)
+
+
+if __name__ == '__main__':
+    main()
