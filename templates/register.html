@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Monitor — Register</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root, [data-theme="dark"] {
+            --bg-body: #0d1117; --bg-card: #161b22; --bg-input: #0d1117;
+            --border: #30363d; --text-primary: #e6edf3; --text-secondary: #8b949e;
+            --text-muted: #484f58; --blue: #58a6ff; --green-bg: #238636;
+            --green-hover: #2ea043;
+            --err-bg: rgba(248,81,73,0.1); --err-border: rgba(248,81,73,0.4); --err-text: #f85149;
+        }
+        [data-theme="light"] {
+            --bg-body: #f0f2f5; --bg-card: #ffffff; --bg-input: #f6f8fa;
+            --border: #d0d7de; --text-primary: #1f2328; --text-secondary: #656d76;
+            --text-muted: #8b949e; --blue: #0969da; --green-bg: #1a7f37;
+            --green-hover: #2da44e;
+            --err-bg: rgba(207,34,46,0.08); --err-border: rgba(207,34,46,0.3); --err-text: #cf222e;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-body); color: var(--text-primary);
+            min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            transition: background 0.3s, color 0.3s;
+        }
+        .container { width: 100%; max-width: 420px; padding: 20px; }
+        .card {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 12px; padding: 36px 32px; text-align: center;
+        }
+        .card-icon { font-size: 42px; margin-bottom: 12px; }
+        .card-title { font-size: 22px; font-weight: 600; margin-bottom: 6px; }
+        .card-sub { font-size: 14px; color: var(--text-secondary); margin-bottom: 28px; }
+        .form-group { margin-bottom: 16px; text-align: left; }
+        .form-group label { display: block; font-size: 14px; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
+        .form-group input {
+            width: 100%; padding: 11px 14px; font-size: 14px;
+            color: var(--text-primary); background: var(--bg-input);
+            border: 1px solid var(--border); border-radius: 8px; outline: none;
+        }
+        .form-group input:focus { border-color: var(--blue); }
+        .submit-btn {
+            width: 100%; padding: 12px; font-size: 15px; font-weight: 600;
+            color: #fff; background: var(--green-bg); border: none; border-radius: 8px;
+            cursor: pointer; margin-top: 6px;
+        }
+        .submit-btn:hover { background: var(--green-hover); }
+        .flash-error {
+            background: var(--err-bg); border: 1px solid var(--err-border);
+            color: var(--err-text); padding: 8px 14px; border-radius: 8px;
+            font-size: 13px; margin-bottom: 14px; text-align: left;
+        }
+        .login-link { margin-top: 20px; font-size: 13px; color: var(--text-muted); }
+        .login-link a { color: var(--blue); text-decoration: none; }
+        .theme-toggle {
+            position: fixed; top: 16px; right: 16px;
+            background: var(--bg-card); border: 1px solid var(--border);
+            color: var(--text-secondary); padding: 6px 10px; border-radius: 6px;
+            font-size: 16px; cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <button class="theme-toggle" id="themeToggle">&#x2600;</button>
+
+    <div class="container">
+        <div class="card">
+            <div class="card-icon">&#x1F4E8;</div>
+            <h1 class="card-title">Create Your Account</h1>
+            <p class="card-sub">You have been invited to join Server Monitor</p>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% for category, message in messages %}
+                    <div class="flash-error">{{ message }}</div>
+                {% endfor %}
+            {% endwith %}
+
+            <form method="POST" action="{{ url_for('register', token=token) }}">
+                <input type="hidden" name="token" value="{{ token }}">
+                <div class="form-group">
+                    <label for="username">Username / 用户名</label>
+                    <input type="text" id="username" name="username" placeholder="Choose a username" required autofocus>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password / 密码</label>
+                    <input type="password" id="password" name="password" placeholder="At least 6 characters" required>
+                </div>
+                <div class="form-group">
+                    <label for="confirm">Confirm Password / 确认密码</label>
+                    <input type="password" id="confirm" name="confirm" placeholder="Repeat password" required>
+                </div>
+                <button type="submit" class="submit-btn">Create Account</button>
+            </form>
+
+            <p class="login-link">Already have an account? <a href="/login">Log in</a></p>
+        </div>
+    </div>
+
+    <script>
+    (function(){
+        const s = localStorage.getItem('sm-theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', s);
+        const btn = document.getElementById('themeToggle');
+        btn.innerHTML = s === 'dark' ? '&#x2600;' : '&#x1F319;';
+        btn.onclick = () => {
+            const c = document.documentElement.getAttribute('data-theme');
+            const n = c === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', n);
+            localStorage.setItem('sm-theme', n);
+            btn.innerHTML = n === 'dark' ? '&#x2600;' : '&#x1F319;';
+        };
+    })();
+    </script>
+</body>
+</html>

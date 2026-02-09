@@ -578,6 +578,9 @@
             <span class="refresh-dot"></span>
             <span id="refreshTimer">Auto 30s</span>
         </div>
+        {% if current_user and current_user.role == 'admin' %}
+        <a href="/admin" class="logout-btn" style="border-color:var(--purple);color:var(--purple)">Admin</a>
+        {% endif %}
         <button class="theme-toggle" id="themeToggle" title="Toggle theme">&#x1F319;</button>
         <a href="/logout" class="logout-btn">Logout</a>
     </div>
@@ -606,6 +609,7 @@
 // Data & State
 // ---------------------------------------------------------------------------
 let serverData = {{ servers | tojson }};
+let currentUser = {{ current_user | tojson }};
 let refreshInterval = 30;
 let countdown = refreshInterval;
 let deleteServerId = null;
@@ -716,6 +720,7 @@ function renderOverview(data) {
 // GPU Processes (with user/container)
 // ---------------------------------------------------------------------------
 function renderGpuProcesses(processes) {
+    if (!currentUser.can_view_processes) return '';
     if (!processes || processes.length === 0) return '';
     const rows = processes.map(p => {
         const name = p.process_name ? p.process_name.split('/').pop() : 'unknown';
@@ -880,9 +885,9 @@ function renderServerCard(server) {
                     <div class="server-meta">${s.ip || 'Unknown IP'} · Last seen: ${fmtTime(s.last_seen)}</div>
                 </div>
             </div>
-            <div class="card-actions">
+            ${currentUser.role === 'admin' ? `<div class="card-actions">
                 <button class="btn-icon" title="Delete server" onclick="openDeleteModal(${s.id}, '${s.hostname}')">&#x1F5D1;</button>
-            </div>
+            </div>` : ''}
         </div>
         ${metricsHTML}
     </div>`;

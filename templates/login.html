@@ -1,147 +1,135 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Server Monitor — 登录</title>
+    <title>Server Monitor — Login</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
+        :root, [data-theme="dark"] {
+            --bg-body: #0d1117; --bg-card: #161b22; --bg-input: #0d1117;
+            --border: #30363d; --text-primary: #e6edf3; --text-secondary: #8b949e;
+            --text-muted: #484f58; --blue: #58a6ff; --green-bg: #238636;
+            --green-hover: #2ea043; --green-active: #1a7f37;
+            --err-bg: rgba(248,81,73,0.1); --err-border: rgba(248,81,73,0.4); --err-text: #f85149;
+            --ok-bg: rgba(63,185,80,0.1); --ok-border: rgba(63,185,80,0.4); --ok-text: #3fb950;
+        }
+        [data-theme="light"] {
+            --bg-body: #f0f2f5; --bg-card: #ffffff; --bg-input: #f6f8fa;
+            --border: #d0d7de; --text-primary: #1f2328; --text-secondary: #656d76;
+            --text-muted: #8b949e; --blue: #0969da; --green-bg: #1a7f37;
+            --green-hover: #2da44e; --green-active: #1a7f37;
+            --err-bg: rgba(207,34,46,0.08); --err-border: rgba(207,34,46,0.3); --err-text: #cf222e;
+            --ok-bg: rgba(26,127,55,0.08); --ok-border: rgba(26,127,55,0.3); --ok-text: #1a7f37;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: #0d1117;
-            color: #e6edf3;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            background: var(--bg-body); color: var(--text-primary);
+            min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            transition: background 0.3s, color 0.3s;
         }
 
-        .login-container {
-            width: 100%;
-            max-width: 400px;
-            padding: 20px;
-        }
+        .login-container { width: 100%; max-width: 400px; padding: 20px; }
 
         .login-card {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 12px;
-            padding: 40px 32px;
-            text-align: center;
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 12px; padding: 40px 32px; text-align: center;
+            transition: background 0.3s;
         }
 
-        .login-icon {
-            font-size: 48px;
-            margin-bottom: 16px;
-        }
+        .login-icon { font-size: 48px; margin-bottom: 16px; }
+        .login-title { font-size: 24px; font-weight: 600; margin-bottom: 8px; }
+        .login-subtitle { font-size: 14px; color: var(--text-secondary); margin-bottom: 32px; }
 
-        .login-title {
-            font-size: 24px;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: #e6edf3;
-        }
-
-        .login-subtitle {
-            font-size: 14px;
-            color: #8b949e;
-            margin-bottom: 32px;
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-            text-align: left;
-        }
-
-        .form-group label {
-            display: block;
-            font-size: 14px;
-            font-weight: 500;
-            color: #8b949e;
-            margin-bottom: 8px;
-        }
-
+        .form-group { margin-bottom: 18px; text-align: left; }
+        .form-group label { display: block; font-size: 14px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; }
         .form-group input {
-            width: 100%;
-            padding: 12px 16px;
-            font-size: 15px;
-            color: #e6edf3;
-            background: #0d1117;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            outline: none;
+            width: 100%; padding: 12px 16px; font-size: 15px;
+            color: var(--text-primary); background: var(--bg-input);
+            border: 1px solid var(--border); border-radius: 8px; outline: none;
             transition: border-color 0.2s;
         }
-
-        .form-group input:focus {
-            border-color: #58a6ff;
-            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
-        }
+        .form-group input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(88,166,255,0.15); }
 
         .login-btn {
-            width: 100%;
-            padding: 12px;
-            font-size: 15px;
-            font-weight: 600;
-            color: #fff;
-            background: #238636;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: background 0.2s;
+            width: 100%; padding: 12px; font-size: 15px; font-weight: 600;
+            color: #fff; background: var(--green-bg); border: none; border-radius: 8px;
+            cursor: pointer; transition: background 0.2s;
         }
+        .login-btn:hover { background: var(--green-hover); }
+        .login-btn:active { background: var(--green-active); }
 
-        .login-btn:hover {
-            background: #2ea043;
+        .flash-msg {
+            padding: 10px 16px; border-radius: 8px; font-size: 14px;
+            margin-bottom: 16px; text-align: center;
         }
+        .flash-error { background: var(--err-bg); border: 1px solid var(--err-border); color: var(--err-text); }
+        .flash-success { background: var(--ok-bg); border: 1px solid var(--ok-border); color: var(--ok-text); }
 
-        .login-btn:active {
-            background: #1a7f37;
-        }
+        .footer-text { margin-top: 24px; font-size: 12px; color: var(--text-muted); }
 
-        .flash-error {
-            background: rgba(248, 81, 73, 0.1);
-            border: 1px solid rgba(248, 81, 73, 0.4);
-            color: #f85149;
-            padding: 10px 16px;
-            border-radius: 8px;
-            font-size: 14px;
-            margin-bottom: 20px;
-            text-align: center;
+        .theme-toggle {
+            position: fixed; top: 16px; right: 16px;
+            background: var(--bg-card); border: 1px solid var(--border);
+            color: var(--text-secondary); padding: 6px 10px; border-radius: 6px;
+            font-size: 16px; cursor: pointer; transition: all 0.2s;
         }
-
-        .footer-text {
-            margin-top: 24px;
-            font-size: 12px;
-            color: #484f58;
-        }
+        .theme-toggle:hover { color: var(--text-primary); border-color: var(--text-secondary); }
     </style>
 </head>
 <body>
+    <button class="theme-toggle" id="themeToggle" title="Toggle theme">&#x2600;</button>
+
     <div class="login-container">
         <div class="login-card">
             <div class="login-icon">&#x1F5A5;</div>
             <h1 class="login-title">Server Monitor</h1>
-            <p class="login-subtitle">请输入管理员密码以访问监控面板</p>
+            <p class="login-subtitle">Log in to access the monitoring dashboard</p>
 
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% for category, message in messages %}
-                    <div class="flash-error">{{ message }}</div>
+                    <div class="flash-msg flash-{{ category }}">{{ message }}</div>
                 {% endfor %}
             {% endwith %}
 
             <form method="POST" action="{{ url_for('login') }}">
                 <div class="form-group">
-                    <label for="password">管理员密码</label>
-                    <input type="password" id="password" name="password"
-                           placeholder="请输入密码" autofocus required>
+                    <label for="username">Username / 用户名</label>
+                    <input type="text" id="username" name="username"
+                           placeholder="Username" autofocus required autocomplete="username">
                 </div>
-                <button type="submit" class="login-btn">登 录</button>
+                <div class="form-group">
+                    <label for="password">Password / 密码</label>
+                    <input type="password" id="password" name="password"
+                           placeholder="Password" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="login-btn">Log In</button>
             </form>
 
-            <p class="footer-text">密码由服务器管理员配置，不可通过此页面获取或重置</p>
+            <p class="footer-text">Contact your administrator if you need an account</p>
         </div>
     </div>
+
+    <script>
+    function initTheme() {
+        const saved = localStorage.getItem('sm-theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', saved);
+        updateIcon(saved);
+    }
+    function toggleTheme() {
+        const cur = document.documentElement.getAttribute('data-theme');
+        const next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('sm-theme', next);
+        updateIcon(next);
+    }
+    function updateIcon(t) {
+        document.getElementById('themeToggle').innerHTML = t === 'dark' ? '&#x2600;' : '&#x1F319;';
+    }
+    document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+    initTheme();
+    </script>
 </body>
 </html>

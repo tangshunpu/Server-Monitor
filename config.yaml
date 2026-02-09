@@ -14,9 +14,10 @@ server:
   secret_key: "please-change-this-to-a-random-secret-string"
   debug: false
 
-# Admin login password (loaded only from this file; never exposed via the web interface)
-# 管理员登录密码（仅从此文件加载，Web 界面不会暴露任何密码信息）
+# Initial admin account (one-time bootstrap: used only when DB has no users)
+# 初始管理员账户（一次性引导：仅在数据库无用户时使用）
 auth:
+  username: "admin"
   password: "admin123"
 
 # Agent reporting auth token (agents on each server must use the same token)

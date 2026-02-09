@@ -70,9 +70,12 @@ if [ ! -f "$INSTALL_DIR/config.yaml" ]; then
     SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
     AGENT_TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(24))")
 
-    # Prompt for password / 提示输入密码
+    # Prompt for admin credentials / 提示输入管理员凭据
     echo ""
-    read -sp "Set admin password / 设置管理员密码: " ADMIN_PASS
+    read -p "Admin username (default: admin) / 管理员用户名 (默认: admin): " ADMIN_USER
+    ADMIN_USER=${ADMIN_USER:-admin}
+
+    read -sp "Admin password / 管理员密码: " ADMIN_PASS
     echo ""
     if [ -z "$ADMIN_PASS" ]; then
         ADMIN_PASS="admin123"
@@ -90,6 +93,7 @@ server:
   debug: false
 
 auth:
+  username: "${ADMIN_USER}"
   password: "${ADMIN_PASS}"
 
 agent:
