@@ -185,10 +185,12 @@
             min-width: 220px;
             flex: 1;
             display: flex;
-            align-items: center;
+            align-items: stretch;
+            justify-content: space-between;
             gap: 14px;
             transition: border-color 0.2s, background 0.3s;
             cursor: default;
+            min-height: 104px;
         }
 
         .overview-card:hover { border-color: var(--text-muted); }
@@ -209,7 +211,13 @@
         .ov-dot.fault { background: var(--red); box-shadow: 0 0 8px rgba(248,81,73,0.6); animation: pulse 1s infinite; }
         .ov-dot.offline { background: var(--text-muted); }
 
-        .ov-info { flex: 1; min-width: 0; }
+        .ov-info {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
 
         .ov-hostname {
             font-size: 14px;
@@ -224,6 +232,41 @@
             color: var(--purple);
             font-weight: 500;
             margin-top: 2px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .ov-vendor-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 10px;
+            line-height: 1;
+            padding: 3px 7px;
+            border-radius: 999px;
+            border: 1px solid transparent;
+            vertical-align: middle;
+        }
+
+        .ov-vendor-badge.nvidia {
+            color: #76b900;
+            background: rgba(118, 185, 0, 0.12);
+            border-color: rgba(118, 185, 0, 0.4);
+        }
+
+        .nvidia-mark {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+            font-weight: 700;
+            color: #0d1117;
+            background: #76b900;
+            flex-shrink: 0;
         }
 
         .ov-stats {
@@ -371,6 +414,11 @@
             height: 100%;
             border-radius: 4px;
             transition: width 0.6s ease;
+        }
+
+        .progress-fill.zero {
+            min-width: 2px;
+            opacity: 0.7;
         }
 
         .progress-fill.green  { background: var(--green); }
@@ -704,17 +752,20 @@ function fmtTime(ts) {
 // Overview
 // ---------------------------------------------------------------------------
 function getGpuSummary(gpuData) {
-    if (!gpuData || gpuData.length === 0) return { label: 'No GPU', active: 0, total: 0 };
+    if (!gpuData || gpuData.length === 0) return { label: 'No GPU', active: 0, total: 0, hasNvidia: false };
     const groups = {};
     let active = 0;
+    let hasNvidia = false;
     gpuData.forEach(g => {
+        const rawName = g.name || 'GPU';
+        if (/nvidia/i.test(rawName)) hasNvidia = true;
         const name = (g.name || 'GPU').replace(/^NVIDIA\s+/i, '');
         groups[name] = (groups[name] || 0) + 1;
         if ((g.gpu_utilization && g.gpu_utilization > 5) ||
             (g.processes && g.processes.length > 0)) active++;
     });
     const label = Object.entries(groups).map(([n, c]) => `${c}*${n}`).join(', ');
-    return { label, active, total: gpuData.length };
+    return { label, active, total: gpuData.length, hasNvidia };
 }
 
 function renderOverview(data) {
@@ -724,17 +775,18 @@ function renderOverview(data) {
     const cards = data.map(s => {
         const m = s.metrics;
         const st = s.status; // online, offline, warning, maintenance, fault
-        const gpu = m ? getGpuSummary(m.gpu_data) : { label: '-', active: 0, total: 0 };
+        const gpu = m ? getGpuSummary(m.gpu_data) : { label: '-', active: 0, total: 0, hasNvidia: false };
         const statusLabel = (st === 'maintenance' || st === 'fault') ?
             `<span class="status-badge ${st}">${st.toUpperCase()}</span>` : '';
         const noteHTML = s.admin_status_note && s.admin_status !== 'normal' ?
             `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;font-style:italic">${s.admin_status_note}</div>` : '';
+        const vendorBadge = gpu.hasNvidia ? `<span class="ov-vendor-badge nvidia"><span class="nvidia-mark">N</span>NVIDIA</span>` : '';
 
         return `<div class="overview-card status-${st}">
             <span class="ov-dot ${st}"></span>
             <div class="ov-info">
                 <div class="ov-hostname">${s.hostname} ${statusLabel}</div>
-                <div class="ov-gpu-summary">${gpu.label}</div>
+                <div class="ov-gpu-summary">${gpu.label}${vendorBadge}</div>
                 ${noteHTML}
                 <div class="ov-stats">
                     <span>CPU <span class="ov-stat-val">${m ? fmt(m.cpu_percent, '%') : '-'}</span></span>
@@ -742,10 +794,10 @@ function renderOverview(data) {
                     <span>DISK <span class="ov-stat-val">${m ? fmt(m.disk_percent, '%') : '-'}</span></span>
                 </div>
             </div>
-            ${gpu.total > 0 ? `<div class="ov-gpu-active">
-                <div class="ov-gpu-active-num" style="color:var(${gpu.active > 0 ? '--orange' : '--green'})">${gpu.active}/${gpu.total}</div>
+            <div class="ov-gpu-active">
+                <div class="ov-gpu-active-num" style="color:var(${gpu.total > 0 && gpu.active > 0 ? '--orange' : '--green'})">${gpu.total > 0 ? `${gpu.active}/${gpu.total}` : '-'}</div>
                 <div class="ov-gpu-active-label">GPU Active</div>
-            </div>` : ''}
+            </div>
         </div>`;
     }).join('');
 
@@ -791,6 +843,9 @@ function renderGpuCard(gpu) {
     const temp = gpu.temperature;
     const power = gpu.power_draw;
     const powerLimit = gpu.power_limit;
+    const utilValue = Number(util) || 0;
+    const utilFillClass = `${getBarColor(utilValue)}${utilValue <= 0 ? ' zero' : ''}`;
+    const utilWidth = utilValue <= 0 ? 0.1 : utilValue;
 
     return `<div class="gpu-card">
         <div class="gpu-header">
@@ -814,7 +869,7 @@ function renderGpuCard(gpu) {
                     <span class="metric-value">${fmt(util, '%')}</span>
                 </div>
                 <div class="progress-bar">
-                    <div class="progress-fill ${getBarColor(util)}" style="width:${util}%"></div>
+                    <div class="progress-fill ${utilFillClass}" style="width:${utilWidth}%"></div>
                 </div>
             </div>
             <div class="gpu-metric-item">
