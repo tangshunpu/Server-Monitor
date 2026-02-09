@@ -14,7 +14,9 @@ A lightweight server monitoring system designed for multi-GPU server clusters. B
 - **Agent Token Auth** — Agents must carry a Bearer token to report data, preventing unauthorized writes
 - **Auto Refresh** — Dashboard pulls latest data every 30 seconds automatically
 - **Auto Data Cleanup** — Historical metrics older than the retention period are automatically purged
-- **Dark Theme UI** — Modern monitoring panel with responsive layout and mobile support
+- **Dark / Light Theme** — Toggle between dark and light themes, preference saved in browser
+- **Server Overview Panel** — At-a-glance summary showing each server's GPU model, count, and active status (e.g. "THEGANG2024 (8*A6000)")
+- **Per-User GPU Usage** — Displays which user and LXC/Incus container owns each GPU process
 
 ## Project Structure
 
@@ -34,6 +36,7 @@ server-moniter/
 ├── scripts/
 │   ├── install_server.sh  # One-click server deploy / 主服务端一键部署
 │   ├── install_agent.sh   # One-click agent deploy / Agent 一键部署
+│   ├── upgrade.sh         # One-click upgrade / 一键升级
 │   └── uninstall.sh       # Uninstall script / 卸载脚本
 └── templates/
     ├── login.html         # Login page / 登录页面
@@ -72,6 +75,20 @@ docker-compose up -d
 > **Note**: Docker is only recommended for the server side. Agents should run natively on the host for direct access to `nvidia-smi` and system metrics.
 >
 > **注意**：Docker 仅推荐用于主服务端。Agent 应直接在宿主机运行以访问 `nvidia-smi` 和系统指标。
+
+### Upgrade
+
+Upgrade server and/or agent to the latest version (config files are preserved):
+
+```bash
+# Auto-detect and upgrade all installed components
+# 自动检测并升级所有已安装组件
+curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/upgrade.sh | sudo bash
+
+# Or specify: server | agent | all
+# 或指定: server | agent | all
+curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/upgrade.sh | sudo bash -s -- agent
+```
 
 ### Uninstall
 
@@ -235,7 +252,9 @@ If a server has no NVIDIA GPU, the agent will automatically skip GPU collection;
 - **Agent Token 认证** — Agent 上报数据需携带 Bearer token，防止未授权写入
 - **自动刷新** — Dashboard 每 30 秒自动拉取最新数据，无需手动刷新
 - **数据自动清理** — 超过保留天数的历史指标自动删除
-- **暗黑主题 UI** — 现代化监控面板，响应式布局，支持移动端
+- **明暗主题切换** — 支持深色 / 浅色主题，偏好保存在浏览器
+- **服务器总览面板** — 一目了然显示每台服务器的 GPU 型号、数量和活跃状态（如 "THEGANG2024 (8*A6000)"）
+- **用户级 GPU 占用** — 显示每个 GPU 进程的用户名和 LXC/Incus 容器归属
 
 ### 一键部署
 
@@ -267,6 +286,16 @@ docker-compose up -d
 ```
 
 > **注意**：Docker 仅推荐用于主服务端。Agent 应直接在宿主机运行以访问 `nvidia-smi` 和系统指标。
+
+**一键升级**
+
+```bash
+# 自动检测并升级所有已安装组件（配置文件不会被修改）
+curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/upgrade.sh | sudo bash
+
+# 或指定升级: server | agent | all
+curl -sSL https://raw.githubusercontent.com/tangshunpu/Server-Monitor/main/scripts/upgrade.sh | sudo bash -s -- agent
+```
 
 **卸载**
 

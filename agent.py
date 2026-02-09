@@ -51,6 +51,61 @@ def safe_float(val):
 
 
 # ---------------------------------------------------------------------------
+# Process owner detection (user & container) / 进程归属检测（用户 & 容器）
+# ---------------------------------------------------------------------------
+
+def _get_process_owner(pid):
+    """Get the username and LXC/Incus container name for a process.
+    获取进程的用户名和 LXC/Incus 容器名。
+    Returns (username, container) where container may be None.
+    返回 (用户名, 容器名)，容器名可能为 None。"""
+    username = 'unknown'
+    container = None
+
+    # 1) Get username via ps / 通过 ps 获取用户名
+    try:
+        result = subprocess.run(
+            ['ps', '-o', 'user=', '-p', str(pid)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            username = result.stdout.strip()
+    except Exception:
+        pass
+
+    # 2) Detect LXC/Incus container via cgroup / 通过 cgroup 检测 LXC/Incus 容器
+    try:
+        cgroup_path = f'/proc/{pid}/cgroup'
+        with open(cgroup_path, 'r') as f:
+            content = f.read()
+
+        # cgroup v2: 0::/incus.payload/container-name/...
+        # cgroup v1: N:xxx:/lxc/container-name/...
+        # Also handles: /incus/container-name, /lxc.payload/container-name
+        for marker in ('incus.payload/', 'lxc.payload/',
+                       'incus/', 'lxc/', '/lxd/'):
+            if marker in content:
+                for line in content.strip().split('\n'):
+                    if marker in line:
+                        parts = line.split('/')
+                        for i, part in enumerate(parts):
+                            if marker.rstrip('/') in part and i + 1 < len(parts):
+                                candidate = parts[i + 1].strip()
+                                if candidate and candidate not in ('init.scope', ''):
+                                    container = candidate
+                                    break
+                    if container:
+                        break
+                break
+    except (FileNotFoundError, PermissionError):
+        pass
+    except Exception:
+        pass
+
+    return username, container
+
+
+# ---------------------------------------------------------------------------
 # GPU Info Collection (via nvidia-smi) / GPU 信息采集（通过 nvidia-smi）
 # ---------------------------------------------------------------------------
 
@@ -111,10 +166,14 @@ def get_gpu_info():
                 if len(parts) >= 4:
                     idx = bus_id_map.get(parts[0])
                     if idx is not None:
+                        pid = int(parts[1])
+                        username, container = _get_process_owner(pid)
                         gpus[idx]['processes'].append({
-                            'pid':          int(parts[1]),
+                            'pid':          pid,
                             'memory_used':  safe_float(parts[2]),
                             'process_name': parts[3],
+                            'username':     username,
+                            'container':    container,
                         })
 
     except FileNotFoundError:
