@@ -9,6 +9,7 @@ import os
 import json
 import time
 import hmac
+import hashlib
 import secrets
 import string
 import sqlite3
@@ -129,6 +130,17 @@ def init_db():
         expires_at          TIMESTAMP,
         used_by             INTEGER
     )''')
+    db.execute('''CREATE TABLE IF NOT EXISTS user_agent_tokens (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id             INTEGER NOT NULL,
+        token_hash          TEXT NOT NULL UNIQUE,
+        token_name          TEXT DEFAULT '',
+        created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_used_at        TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )''')
+    db.execute('''CREATE INDEX IF NOT EXISTS idx_user_agent_tokens_user
+                  ON user_agent_tokens(user_id)''')
 
     # --- Schema migration: add new columns if missing ---
     # metrics.errors
@@ -181,6 +193,11 @@ def _generate_password(length=12):
     """Generate a random password / 生成随机密码"""
     alphabet = string.ascii_letters + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _hash_user_agent_token(token):
+    """Hash user-generated agent token before storage / 用户 token 入库前哈希"""
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
 
 
 def _load_session_user():
@@ -273,6 +290,12 @@ def logout():
 def dashboard():
     server_data = _build_server_data(g.user)
     return render_template('dashboard.html', servers=server_data, current_user=g.user)
+
+
+@app.route('/panel')
+@login_required
+def user_panel():
+    return render_template('user.html', current_user=g.user)
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +430,93 @@ def api_delete_server(server_id):
     db.execute('DELETE FROM user_server_access WHERE server_id = ?', (server_id,))
     db.execute('DELETE FROM metrics WHERE server_id = ?', (server_id,))
     db.execute('DELETE FROM servers WHERE id = ?', (server_id,))
+    db.commit()
+    return jsonify({'status': 'ok'})
+
+
+# ---------------------------------------------------------------------------
+# User Panel API / 用户面板 API
+# ---------------------------------------------------------------------------
+
+@app.route('/api/user/tokens')
+@login_required
+def api_user_list_tokens():
+    db = get_db()
+    rows = db.execute(
+        '''SELECT id, token_name, created_at, last_used_at
+           FROM user_agent_tokens
+           WHERE user_id = ?
+           ORDER BY created_at DESC''',
+        (g.user['id'],)
+    ).fetchall()
+    return jsonify([{
+        'id': r['id'],
+        'token_name': r['token_name'] or '',
+        'created_at': r['created_at'],
+        'last_used_at': r['last_used_at'],
+    } for r in rows])
+
+
+@app.route('/api/user/tokens', methods=['POST'])
+@login_required
+def api_user_create_token():
+    data = request.get_json(silent=True) or {}
+    token_name = (data.get('token_name') or '').strip()[:64]
+    raw_token = f"smu_{secrets.token_urlsafe(32)}"
+    token_hash = _hash_user_agent_token(raw_token)
+
+    db = get_db()
+    cursor = db.execute(
+        'INSERT INTO user_agent_tokens (user_id, token_hash, token_name) VALUES (?, ?, ?)',
+        (g.user['id'], token_hash, token_name)
+    )
+    db.commit()
+    return jsonify({
+        'id': cursor.lastrowid,
+        'token': raw_token,  # Shown once / 仅显示一次
+        'token_name': token_name,
+    })
+
+
+@app.route('/api/user/tokens/<int:token_id>', methods=['DELETE'])
+@login_required
+def api_user_delete_token(token_id):
+    db = get_db()
+    row = db.execute(
+        'SELECT id FROM user_agent_tokens WHERE id=? AND user_id=?',
+        (token_id, g.user['id'])
+    ).fetchone()
+    if not row:
+        return jsonify({'error': 'Token not found'}), 404
+    db.execute('DELETE FROM user_agent_tokens WHERE id=?', (token_id,))
+    db.commit()
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/user/password', methods=['POST'])
+@login_required
+def api_user_change_password():
+    data = request.get_json(silent=True) or {}
+    old_password = data.get('old_password', '')
+    new_password = (data.get('new_password') or '').strip()
+
+    if not old_password:
+        return jsonify({'error': 'Current password is required / 请输入当前密码'}), 400
+    if len(new_password) < 6:
+        return jsonify({'error': 'Password must be at least 6 characters / 密码至少 6 个字符'}), 400
+
+    db = get_db()
+    user = db.execute(
+        'SELECT id, password_hash FROM users WHERE id = ?',
+        (g.user['id'],)
+    ).fetchone()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    if not check_password_hash(user['password_hash'], old_password):
+        return jsonify({'error': 'Current password is incorrect / 当前密码错误'}), 400
+
+    pw_hash = generate_password_hash(new_password)
+    db.execute('UPDATE users SET password_hash=? WHERE id=?', (pw_hash, g.user['id']))
     db.commit()
     return jsonify({'status': 'ok'})
 
@@ -761,14 +871,29 @@ def api_admin_delete_announcement(ann_id):
 @app.route('/api/report', methods=['POST'])
 def api_report():
     token = request.headers.get('Authorization', '').replace('Bearer ', '')
-    if not hmac.compare_digest(token, CONFIG['agent']['token']):
+    if not token:
         return jsonify({'error': 'Unauthorized'}), 401
+
+    db = get_db()
+    report_user_id = None
+    if not hmac.compare_digest(token, CONFIG['agent']['token']):
+        token_hash = _hash_user_agent_token(token)
+        token_row = db.execute(
+            'SELECT id, user_id FROM user_agent_tokens WHERE token_hash = ?',
+            (token_hash,)
+        ).fetchone()
+        if not token_row:
+            return jsonify({'error': 'Unauthorized'}), 401
+        report_user_id = token_row['user_id']
+        db.execute(
+            'UPDATE user_agent_tokens SET last_used_at = ? WHERE id = ?',
+            (datetime.now().isoformat(), token_row['id'])
+        )
 
     data = request.get_json()
     if not data or 'hostname' not in data:
         return jsonify({'error': 'Invalid data'}), 400
 
-    db = get_db()
     now = datetime.now().isoformat()
 
     # Upsert server / 更新或插入服务器记录
@@ -779,6 +904,15 @@ def api_report():
 
     if server:
         server_id = server['id']
+        if report_user_id is not None:
+            access = db.execute(
+                'SELECT 1 FROM user_server_access WHERE user_id=? AND server_id=?',
+                (report_user_id, server_id)
+            ).fetchone()
+            if not access:
+                return jsonify({
+                    'error': 'Hostname already exists and is not assigned to this user'
+                }), 403
         db.execute(
             'UPDATE servers SET ip=?, os_info=?, last_seen=?, status=? WHERE id=?',
             (data.get('ip'), data.get('os_info'), now, 'online', server_id)
@@ -789,6 +923,11 @@ def api_report():
             (data['hostname'], data.get('ip'), data.get('os_info'), now, 'online')
         )
         server_id = cursor.lastrowid
+        if report_user_id is not None:
+            db.execute(
+                'INSERT OR IGNORE INTO user_server_access (user_id, server_id) VALUES (?, ?)',
+                (report_user_id, server_id)
+            )
 
     # Insert metric / 插入指标数据
     db.execute(

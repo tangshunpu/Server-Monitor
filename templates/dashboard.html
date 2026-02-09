@@ -656,6 +656,7 @@
             <span class="refresh-dot"></span>
             <span id="refreshTimer">Auto 30s</span>
         </div>
+        <a href="/panel" class="logout-btn">User Panel</a>
         {% if current_user and current_user.role == 'admin' %}
         <a href="/admin" class="logout-btn" style="border-color:var(--purple);color:var(--purple)">Admin</a>
         {% endif %}
@@ -741,6 +742,11 @@ function fmt(val, unit) {
 function fmtSize(gb) {
     if (gb === null || gb === undefined) return 'N/A';
     return gb.toFixed(1) + ' GB';
+}
+
+function fmtDiskTb(gb) {
+    if (gb === null || gb === undefined) return 'N/A';
+    return (gb / 1024).toFixed(2) + ' TB';
 }
 
 function fmtTime(ts) {
@@ -949,7 +955,7 @@ function renderServerCard(server) {
                     <div class="progress-bar">
                         <div class="progress-fill ${getBarColor(m.disk_percent || 0)}" style="width:${m.disk_percent || 0}%"></div>
                     </div>
-                    <div class="metric-detail">${fmtSize(m.disk_used)} / ${fmtSize(m.disk_total)}</div>
+                    <div class="metric-detail">${fmtDiskTb(m.disk_used)} / ${fmtDiskTb(m.disk_total)}</div>
                 </div>
             </div>
             <div class="network-row">

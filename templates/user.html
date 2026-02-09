@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Panel - Server Monitor</title>
+    <style>
+        :root {
+            --bg: #0f1115;
+            --bg-card: #161a22;
+            --bg-inner: #1e2430;
+            --text: #e8ecf4;
+            --text-secondary: #98a2b3;
+            --border: #2b3240;
+            --blue: #58a6ff;
+            --green: #34d399;
+            --red: #f87171;
+            --yellow: #fbbf24;
+        }
+        [data-theme="light"] {
+            --bg: #f5f7fb;
+            --bg-card: #ffffff;
+            --bg-inner: #f0f4fb;
+            --text: #111827;
+            --text-secondary: #5b6472;
+            --border: #d7dde7;
+            --blue: #2563eb;
+            --green: #059669;
+            --red: #dc2626;
+            --yellow: #d97706;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+        .navbar {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: rgba(15,17,21,.9);
+            border-bottom: 1px solid var(--border);
+            backdrop-filter: blur(8px);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 20px;
+        }
+        [data-theme="light"] .navbar { background: rgba(255,255,255,.92); }
+        .navbar-left { display: flex; align-items: center; gap: 10px; }
+        .navbar-title { font-size: 15px; font-weight: 700; }
+        .navbar-right { display: flex; align-items: center; gap: 10px; }
+        .btn-link {
+            text-decoration: none;
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 13px;
+        }
+        .btn-link:hover { color: var(--text); border-color: var(--blue); }
+        .theme-toggle {
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-secondary);
+            border-radius: 8px;
+            width: 34px;
+            height: 34px;
+            cursor: pointer;
+        }
+        .container {
+            max-width: 1100px;
+            margin: 24px auto;
+            padding: 0 16px 24px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        .panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+        }
+        .panel h2 {
+            font-size: 16px;
+            margin-bottom: 12px;
+        }
+        .hint {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+            line-height: 1.5;
+        }
+        .form-row { display: flex; gap: 8px; margin-bottom: 10px; }
+        input {
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-inner);
+            color: var(--text);
+            padding: 9px 10px;
+            outline: none;
+        }
+        input:focus { border-color: var(--blue); }
+        .btn {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-inner);
+            color: var(--text);
+            padding: 9px 12px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .btn-primary {
+            border-color: var(--blue);
+            color: #fff;
+            background: var(--blue);
+        }
+        .btn-danger {
+            border-color: var(--red);
+            color: var(--red);
+            background: transparent;
+        }
+        .msg {
+            font-size: 13px;
+            margin-top: 8px;
+            min-height: 18px;
+        }
+        .msg.ok { color: var(--green); }
+        .msg.err { color: var(--red); }
+        .token-list { margin-top: 10px; }
+        .token-item {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            align-items: center;
+        }
+        .token-meta { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+        .token-result {
+            margin-top: 10px;
+            border: 1px dashed var(--blue);
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 13px;
+            line-height: 1.6;
+            word-break: break-all;
+        }
+        .copy-btn {
+            margin-left: 6px;
+            color: var(--blue);
+            cursor: pointer;
+            text-decoration: underline;
+            font-size: 12px;
+        }
+        .server-list { font-size: 13px; line-height: 1.8; color: var(--text-secondary); }
+        .server-list strong { color: var(--text); }
+        .mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            background: var(--bg-inner);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px;
+            margin-top: 8px;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        @media (max-width: 900px) {
+            .container { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+<nav class="navbar">
+    <div class="navbar-left">
+        <span>&#x1F5A5;</span>
+        <span class="navbar-title">User Panel</span>
+    </div>
+    <div class="navbar-right">
+        {% if current_user and current_user.role == 'admin' %}
+        <a class="btn-link" href="/admin">Admin</a>
+        {% endif %}
+        <a class="btn-link" href="/">Dashboard</a>
+        <button class="theme-toggle" id="themeToggle">&#x1F319;</button>
+        <a class="btn-link" href="/logout">Logout</a>
+    </div>
+</nav>
+
+<main class="container">
+    <section class="panel">
+        <h2>My Agent Tokens</h2>
+        <p class="hint">Generate your own token and configure it in `agent_config.yaml`. Servers reported with this token are only visible to your account (admin can still view all).</p>
+        <div class="form-row">
+            <input id="tokenName" placeholder="Token name (optional), e.g. office-gpu">
+            <button class="btn btn-primary" onclick="createToken()">Generate Token</button>
+        </div>
+        <div id="tokenMessage" class="msg"></div>
+        <div id="newTokenBox"></div>
+        <div class="token-list" id="tokenList"></div>
+    </section>
+
+    <section class="panel">
+        <h2>Change Password</h2>
+        <div class="form-row"><input type="password" id="oldPw" placeholder="Current password"></div>
+        <div class="form-row"><input type="password" id="newPw" placeholder="New password (at least 6 chars)"></div>
+        <div class="form-row"><input type="password" id="confirmPw" placeholder="Confirm new password"></div>
+        <button class="btn btn-primary" onclick="changePassword()">Update Password</button>
+        <div id="pwMessage" class="msg"></div>
+    </section>
+
+    <section class="panel">
+        <h2>My Servers</h2>
+        <p class="hint">These are the servers currently visible to your account.</p>
+        <div class="server-list" id="serverList">Loading...</div>
+    </section>
+
+    <section class="panel">
+        <h2>Agent Config Example</h2>
+        <p class="hint">After generating a token, use it as the value of `token`:</p>
+        <div class="mono">server:
+  url: "http://YOUR_SERVER_IP:5100/api/report"
+  token: "YOUR_GENERATED_TOKEN"</div>
+    </section>
+</main>
+
+<script>
+function api(url, opts={}) {
+    return fetch(url, { headers: {'Content-Type':'application/json'}, ...opts })
+        .then(r => r.json());
+}
+
+function fmtTime(ts) {
+    if (!ts) return '-';
+    return new Date(ts).toLocaleString('zh-CN', {hour12:false});
+}
+
+function copyText(text) {
+    if (!text) return;
+    const fallbackCopy = () => {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+        document.body.removeChild(ta);
+        if (!ok) window.prompt('Copy manually / 请手动复制:', text);
+    };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).catch(fallbackCopy);
+    else fallbackCopy();
+}
+
+function setMsg(id, text, ok=false) {
+    const el = document.getElementById(id);
+    el.textContent = text || '';
+    el.className = 'msg ' + (ok ? 'ok' : 'err');
+}
+
+function loadTokens() {
+    api('/api/user/tokens').then(rows => {
+        const list = document.getElementById('tokenList');
+        if (!rows || rows.length === 0) {
+            list.innerHTML = '<div class="hint">No token yet.</div>';
+            return;
+        }
+        list.innerHTML = rows.map(t => `
+            <div class="token-item">
+                <div>
+                    <div><strong>${t.token_name || 'Unnamed Token'}</strong></div>
+                    <div class="token-meta">Created: ${fmtTime(t.created_at)} | Last used: ${fmtTime(t.last_used_at)}</div>
+                </div>
+                <button class="btn btn-danger" onclick="deleteToken(${t.id})">Revoke</button>
+            </div>
+        `).join('');
+    });
+}
+
+function createToken() {
+    const tokenName = document.getElementById('tokenName').value.trim();
+    api('/api/user/tokens', {
+        method:'POST',
+        body: JSON.stringify({token_name: tokenName})
+    }).then(r => {
+        if (r.error) { setMsg('tokenMessage', r.error, false); return; }
+        setMsg('tokenMessage', 'Token generated successfully / 生成成功', true);
+        document.getElementById('tokenName').value = '';
+        document.getElementById('newTokenBox').innerHTML = `
+            <div class="token-result">
+                <div><strong>New Token (shown once) / 新 Token（仅显示一次）</strong></div>
+                <div>${r.token}<span class="copy-btn" onclick="copyText('${r.token}')">Copy</span></div>
+            </div>
+        `;
+        loadTokens();
+    });
+}
+
+function deleteToken(tokenId) {
+    if (!confirm('Revoke this token?')) return;
+    api('/api/user/tokens/' + tokenId, { method:'DELETE' }).then(r => {
+        if (r.error) { setMsg('tokenMessage', r.error, false); return; }
+        setMsg('tokenMessage', 'Token revoked / Token 已撤销', true);
+        loadTokens();
+    });
+}
+
+function changePassword() {
+    const oldPw = document.getElementById('oldPw').value;
+    const newPw = document.getElementById('newPw').value;
+    const confirmPw = document.getElementById('confirmPw').value;
+    if (!oldPw || !newPw || !confirmPw) {
+        setMsg('pwMessage', 'Please fill all fields / 请完整填写', false);
+        return;
+    }
+    if (newPw.length < 6) {
+        setMsg('pwMessage', 'Password must be at least 6 characters / 密码至少 6 个字符', false);
+        return;
+    }
+    if (newPw !== confirmPw) {
+        setMsg('pwMessage', 'Passwords do not match / 两次密码不一致', false);
+        return;
+    }
+    api('/api/user/password', {
+        method:'POST',
+        body: JSON.stringify({old_password: oldPw, new_password: newPw})
+    }).then(r => {
+        if (r.error) { setMsg('pwMessage', r.error, false); return; }
+        setMsg('pwMessage', 'Password updated / 密码已更新', true);
+        document.getElementById('oldPw').value = '';
+        document.getElementById('newPw').value = '';
+        document.getElementById('confirmPw').value = '';
+    });
+}
+
+function loadMyServers() {
+    api('/api/servers').then(rows => {
+        const el = document.getElementById('serverList');
+        if (!rows || rows.length === 0) {
+            el.innerHTML = '<span>No server visible yet.</span>';
+            return;
+        }
+        el.innerHTML = rows.map(s => `<div><strong>${s.hostname}</strong> - ${s.ip || 'Unknown IP'} - ${s.status}</div>`).join('');
+    });
+}
+
+(function initTheme(){
+    const s = localStorage.getItem('sm-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', s);
+    document.getElementById('themeToggle').innerHTML = s === 'dark' ? '&#x2600;' : '&#x1F319;';
+})();
+document.getElementById('themeToggle').onclick = () => {
+    const c = document.documentElement.getAttribute('data-theme');
+    const n = c === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', n);
+    localStorage.setItem('sm-theme', n);
+    document.getElementById('themeToggle').innerHTML = n === 'dark' ? '&#x2600;' : '&#x1F319;';
+};
+
+loadTokens();
+loadMyServers();
+</script>
+</body>
+</html>
