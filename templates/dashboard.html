@@ -278,6 +278,39 @@
 
         .ov-stat-val { font-weight: 600; color: var(--text-secondary); }
 
+        .ov-network {
+            margin-top: 8px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .ov-net-pill {
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            background: var(--bg-inner);
+        }
+
+        .ov-net-pill .label { color: var(--text-muted); font-weight: 600; letter-spacing: 0.2px; }
+        .ov-net-pill .value { color: var(--text-secondary); font-weight: 600; }
+        .ov-net-pill.ok {
+            border-color: rgba(63,185,80,0.4);
+            background: rgba(63,185,80,0.12);
+        }
+        .ov-net-pill.ok .value { color: var(--green); }
+        .ov-net-pill.fail {
+            border-color: rgba(248,81,73,0.4);
+            background: rgba(248,81,73,0.12);
+        }
+        .ov-net-pill.fail .value { color: var(--red); }
+        .ov-net-pill.unknown .value { color: var(--text-muted); }
+
         .ov-gpu-active {
             text-align: right;
             flex-shrink: 0;
@@ -766,6 +799,28 @@ function fmtTime(ts) {
     return new Date(ts).toLocaleString('zh-CN', { hour12: false });
 }
 
+function toBool(val) {
+    if (val === true || val === 1 || val === '1') return true;
+    if (val === false || val === 0 || val === '0') return false;
+    return null;
+}
+
+function fmtLatency(ms) {
+    if (ms === null || ms === undefined || Number.isNaN(Number(ms))) return '';
+    return `${Math.round(Number(ms))}ms`;
+}
+
+function renderNetPill(label, ok, latency) {
+    const cls = ok === true ? 'ok' : (ok === false ? 'fail' : 'unknown');
+    const status = ok === true ? 'OK' : (ok === false ? 'FAIL' : '--');
+    const lat = fmtLatency(latency);
+    const value = lat ? `${status} · ${lat}` : status;
+    return `<div class="ov-net-pill ${cls}">
+        <span class="label">${label}</span>
+        <span class="value">${value}</span>
+    </div>`;
+}
+
 // ---------------------------------------------------------------------------
 // Overview
 // ---------------------------------------------------------------------------
@@ -799,6 +854,12 @@ function renderOverview(data) {
         const noteHTML = s.admin_status_note && s.admin_status !== 'normal' ?
             `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;font-style:italic">${s.admin_status_note}</div>` : '';
         const vendorBadge = gpu.hasNvidia ? `<span class="ov-vendor-badge nvidia"><span class="nvidia-mark">N</span>NVIDIA</span>` : '';
+        const cnOk = m ? toBool(m.network_cn_ok) : null;
+        const globalOk = m ? toBool(m.network_global_ok) : null;
+        const netHTML = `<div class="ov-network">
+            ${renderNetPill('CN', cnOk, m ? m.network_cn_latency_ms : null)}
+            ${renderNetPill('Global', globalOk, m ? m.network_global_latency_ms : null)}
+        </div>`;
 
         return `<div class="overview-card status-${st}">
             <span class="ov-dot ${st}"></span>
@@ -811,6 +872,7 @@ function renderOverview(data) {
                     <span>MEM <span class="ov-stat-val">${m ? fmt(m.memory_percent, '%') : '-'}</span></span>
                     <span>DISK <span class="ov-stat-val">${m ? fmt(m.disk_percent, '%') : '-'}</span></span>
                 </div>
+                ${netHTML}
             </div>
             <div class="ov-gpu-active">
                 <div class="ov-gpu-active-num" style="color:var(${gpu.total > 0 && gpu.active > 0 ? '--orange' : '--green'})">${gpu.total > 0 ? `${gpu.active}/${gpu.total}` : '-'}</div>

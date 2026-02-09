@@ -19,6 +19,7 @@ import platform
 import subprocess
 import argparse
 import logging
+import re
 
 import psutil
 import requests
@@ -283,6 +284,80 @@ def _get_primary_mac():
     return None
 
 
+def _check_network_connectivity():
+    """Check domestic/international connectivity using ping/curl.
+    使用 ping/curl 检查国内/国际网络连通性。"""
+    result = {
+        'network_cn_ok': None,
+        'network_cn_latency_ms': None,
+        'network_cn_detail': '',
+        'network_global_ok': None,
+        'network_global_latency_ms': None,
+        'network_global_detail': '',
+    }
+
+    # Domestic check: ping baidu.com / 国内检测：ping baidu.com
+    ping_cmds = [
+        ['ping', '-c', '1', '-W', '2', 'baidu.com'],  # Linux
+        ['ping', '-c', '1', '-t', '2', 'baidu.com'],  # macOS fallback
+    ]
+    ping_ok = False
+    ping_detail = ''
+    ping_start = time.perf_counter()
+    for cmd in ping_cmds:
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=4)
+        except FileNotFoundError:
+            ping_detail = 'ping command not found'
+            break
+        except subprocess.TimeoutExpired:
+            ping_detail = 'ping timed out'
+            continue
+        if out.returncode == 0:
+            ping_ok = True
+            text = (out.stdout or '')
+            m = re.search(r'time[=<]\s*([\d.]+)\s*ms', text)
+            if m:
+                result['network_cn_latency_ms'] = round(float(m.group(1)), 1)
+            break
+        stderr = (out.stderr or '').strip()
+        stdout = (out.stdout or '').strip()
+        ping_detail = (stderr or stdout or f'ping failed (exit {out.returncode})')[:160]
+
+    if result['network_cn_latency_ms'] is None:
+        result['network_cn_latency_ms'] = round((time.perf_counter() - ping_start) * 1000, 1)
+    result['network_cn_ok'] = ping_ok
+    result['network_cn_detail'] = '' if ping_ok else ping_detail
+
+    # Global check: curl google.com / 国际检测：curl google.com
+    curl_cmd = [
+        'curl', '-I', '--max-time', '5', '-o', '/dev/null', '-sS',
+        '-w', '%{http_code}', 'https://www.google.com'
+    ]
+    curl_start = time.perf_counter()
+    try:
+        out = subprocess.run(curl_cmd, capture_output=True, text=True, timeout=7)
+        http_code = (out.stdout or '').strip()
+        curl_ok = out.returncode == 0 and http_code not in ('', '000')
+        result['network_global_ok'] = curl_ok
+        result['network_global_latency_ms'] = round((time.perf_counter() - curl_start) * 1000, 1)
+        if curl_ok:
+            result['network_global_detail'] = f'HTTP {http_code}'
+        else:
+            err = (out.stderr or '').strip()
+            result['network_global_detail'] = (err or f'HTTP {http_code or "000"}')[:160]
+    except FileNotFoundError:
+        result['network_global_ok'] = False
+        result['network_global_latency_ms'] = round((time.perf_counter() - curl_start) * 1000, 1)
+        result['network_global_detail'] = 'curl command not found'
+    except subprocess.TimeoutExpired:
+        result['network_global_ok'] = False
+        result['network_global_latency_ms'] = round((time.perf_counter() - curl_start) * 1000, 1)
+        result['network_global_detail'] = 'curl timed out'
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Disk helpers (ZFS-aware) / 磁盘辅助（ZFS 感知）
 # ---------------------------------------------------------------------------
@@ -394,6 +469,7 @@ def collect_metrics():
 
     # Network / 网络
     net = psutil.net_io_counters()
+    net_health = _check_network_connectivity()
 
     # GPU
     gpu_data, gpu_err = get_gpu_info()
@@ -425,6 +501,12 @@ def collect_metrics():
         'gpu_data':       gpu_data,
         'network_sent':   round(net.bytes_sent / (1024 ** 3), 2),
         'network_recv':   round(net.bytes_recv / (1024 ** 3), 2),
+        'network_cn_ok':          net_health['network_cn_ok'],
+        'network_cn_latency_ms':  net_health['network_cn_latency_ms'],
+        'network_cn_detail':      net_health['network_cn_detail'],
+        'network_global_ok':      net_health['network_global_ok'],
+        'network_global_latency_ms': net_health['network_global_latency_ms'],
+        'network_global_detail':  net_health['network_global_detail'],
         'errors':         errors,
     }
 

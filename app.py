@@ -101,6 +101,12 @@ def init_db():
         gpu_data        TEXT,
         network_sent    REAL,
         network_recv    REAL,
+        network_cn_ok   INTEGER,
+        network_cn_latency_ms REAL,
+        network_cn_detail TEXT,
+        network_global_ok INTEGER,
+        network_global_latency_ms REAL,
+        network_global_detail TEXT,
         FOREIGN KEY (server_id) REFERENCES servers(id)
     )''')
     db.execute('''CREATE INDEX IF NOT EXISTS idx_metrics_server_time
@@ -186,6 +192,18 @@ def init_db():
     cols = [r[1] for r in db.execute('PRAGMA table_info(metrics)').fetchall()]
     if 'errors' not in cols:
         db.execute('ALTER TABLE metrics ADD COLUMN errors TEXT')
+    if 'network_cn_ok' not in cols:
+        db.execute('ALTER TABLE metrics ADD COLUMN network_cn_ok INTEGER')
+    if 'network_cn_latency_ms' not in cols:
+        db.execute('ALTER TABLE metrics ADD COLUMN network_cn_latency_ms REAL')
+    if 'network_cn_detail' not in cols:
+        db.execute('ALTER TABLE metrics ADD COLUMN network_cn_detail TEXT')
+    if 'network_global_ok' not in cols:
+        db.execute('ALTER TABLE metrics ADD COLUMN network_global_ok INTEGER')
+    if 'network_global_latency_ms' not in cols:
+        db.execute('ALTER TABLE metrics ADD COLUMN network_global_latency_ms REAL')
+    if 'network_global_detail' not in cols:
+        db.execute('ALTER TABLE metrics ADD COLUMN network_global_detail TEXT')
     # servers.admin_status / admin_status_note
     scols = [r[1] for r in db.execute('PRAGMA table_info(servers)').fetchall()]
     if 'admin_status' not in scols:
@@ -1554,14 +1572,19 @@ def api_report():
            (server_id, timestamp, cpu_percent, cpu_count,
             memory_total, memory_used, memory_percent,
             disk_total, disk_used, disk_percent,
-            gpu_data, network_sent, network_recv, errors)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            gpu_data, network_sent, network_recv,
+            network_cn_ok, network_cn_latency_ms, network_cn_detail,
+            network_global_ok, network_global_latency_ms, network_global_detail,
+            errors)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
         (server_id, now,
          data.get('cpu_percent'), data.get('cpu_count'),
          data.get('memory_total'), data.get('memory_used'), data.get('memory_percent'),
          data.get('disk_total'), data.get('disk_used'), data.get('disk_percent'),
          json.dumps(data.get('gpu_data', [])),
          data.get('network_sent'), data.get('network_recv'),
+         data.get('network_cn_ok'), data.get('network_cn_latency_ms'), data.get('network_cn_detail'),
+         data.get('network_global_ok'), data.get('network_global_latency_ms'), data.get('network_global_detail'),
          json.dumps(data.get('errors', [])))
     )
     db.commit()
@@ -1703,6 +1726,12 @@ def _build_server_data(user):
                 'gpu_data':       gpu_data,
                 'network_sent':   latest['network_sent'],
                 'network_recv':   latest['network_recv'],
+                'network_cn_ok':  latest['network_cn_ok'],
+                'network_cn_latency_ms': latest['network_cn_latency_ms'],
+                'network_cn_detail': latest['network_cn_detail'],
+                'network_global_ok': latest['network_global_ok'],
+                'network_global_latency_ms': latest['network_global_latency_ms'],
+                'network_global_detail': latest['network_global_detail'],
                 'timestamp':      latest['timestamp'],
             }
 
