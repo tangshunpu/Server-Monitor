@@ -16,3 +16,8 @@ token: "change-this-to-a-secure-token"
 
 # Reporting interval in seconds / 上报间隔（秒）
 interval: 30
+
+# Optional proxy for global connectivity check (curl -x)
+# 国际连通性检测可选代理（用于 curl -x）
+# Example: "http://127.0.0.1:7890"
+global_http_proxy: ""

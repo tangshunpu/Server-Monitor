@@ -805,19 +805,12 @@ function toBool(val) {
     return null;
 }
 
-function fmtLatency(ms) {
-    if (ms === null || ms === undefined || Number.isNaN(Number(ms))) return '';
-    return `${Math.round(Number(ms))}ms`;
-}
-
-function renderNetPill(label, ok, latency) {
+function renderNetPill(label, ok) {
     const cls = ok === true ? 'ok' : (ok === false ? 'fail' : 'unknown');
     const status = ok === true ? 'OK' : (ok === false ? 'FAIL' : '--');
-    const lat = fmtLatency(latency);
-    const value = lat ? `${status} · ${lat}` : status;
     return `<div class="ov-net-pill ${cls}">
         <span class="label">${label}</span>
-        <span class="value">${value}</span>
+        <span class="value">${status}</span>
     </div>`;
 }
 
@@ -857,8 +850,8 @@ function renderOverview(data) {
         const cnOk = m ? toBool(m.network_cn_ok) : null;
         const globalOk = m ? toBool(m.network_global_ok) : null;
         const netHTML = `<div class="ov-network">
-            ${renderNetPill('CN', cnOk, m ? m.network_cn_latency_ms : null)}
-            ${renderNetPill('Global', globalOk, m ? m.network_global_latency_ms : null)}
+            ${renderNetPill('🇨🇳 国内', cnOk)}
+            ${renderNetPill('🌍 国际', globalOk)}
         </div>`;
 
         return `<div class="overview-card status-${st}">
