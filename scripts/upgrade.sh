@@ -83,6 +83,8 @@ if [ "$MODE" = "server" ] || [ "$MODE" = "all" ]; then
     download_file "$REPO_URL/requirements.txt"         "$INSTALL_DIR/requirements.txt"
     download_file "$REPO_URL/templates/login.html"     "$INSTALL_DIR/templates/login.html"
     download_file "$REPO_URL/templates/dashboard.html" "$INSTALL_DIR/templates/dashboard.html"
+    download_file "$REPO_URL/templates/admin.html"     "$INSTALL_DIR/templates/admin.html"
+    download_file "$REPO_URL/templates/register.html"  "$INSTALL_DIR/templates/register.html"
 
     info "Installing/updating Python dependencies / 安装/更新依赖..."
     pip3 install -q flask pyyaml

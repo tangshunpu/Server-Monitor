@@ -40,6 +40,8 @@ server-moniter/
 │   └── uninstall.sh       # Uninstall script / 卸载脚本
 └── templates/
     ├── login.html         # Login page / 登录页面
+    ├── register.html      # Invite registration page / 邀请注册页面
+    ├── admin.html         # Admin panel / 管理员面板
     └── dashboard.html     # Monitoring dashboard / 监控面板
 ```
 
