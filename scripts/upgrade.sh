@@ -23,6 +23,37 @@ info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
+find_preferred_conda_base_python() {
+    local conda_bin=""
+    local conda_base=""
+    if command -v conda &>/dev/null; then
+        conda_bin="$(command -v conda)"
+        conda_base="$("$conda_bin" info --base 2>/dev/null || true)"
+        if [ -n "$conda_base" ] && [ -x "$conda_base/bin/python" ]; then
+            echo "$conda_base/bin/python|conda"
+            return 0
+        fi
+    fi
+
+    local candidates=(
+        "/opt/conda/bin/python|conda"
+        "/root/miniconda3/bin/python|miniconda"
+        "/root/anaconda3/bin/python|anaconda"
+        "/usr/local/miniconda3/bin/python|miniconda"
+        "/usr/local/anaconda3/bin/python|anaconda"
+    )
+    local item path dist
+    for item in "${candidates[@]}"; do
+        path="${item%%|*}"
+        dist="${item##*|}"
+        if [ -x "$path" ]; then
+            echo "$path|$dist"
+            return 0
+        fi
+    done
+    return 1
+}
+
 detect_runtime_from_python() {
     local pybin="$1"
     if [ -z "$pybin" ] || [ ! -x "$pybin" ]; then
@@ -34,9 +65,9 @@ detect_runtime_from_python() {
     pyprefix="$("$pybin" -c 'import sys; print(sys.prefix)' 2>/dev/null || true)"
     local pyruntime="system"
     local pyenvname=""
-    if [[ -n "${CONDA_PREFIX:-}" || "$pyprefix" == *"/conda"* || "$pyprefix" == *"/miniconda"* || "$pyprefix" == *"/anaconda"* ]]; then
+    if [[ "$pyprefix" == *"/conda"* || "$pyprefix" == *"/miniconda"* || "$pyprefix" == *"/anaconda"* ]]; then
         pyruntime="conda"
-        pyenvname="${CONDA_DEFAULT_ENV:-$(basename "$pyprefix")}"
+        pyenvname="$(basename "$pyprefix")"
     fi
     echo "${pyruntime}|${pyenvname}|${pyver}|${pyprefix}"
 }
@@ -56,6 +87,29 @@ service_python_bin() {
             fi
         fi
     fi
+    if command -v python3 &>/dev/null; then
+        command -v python3
+        return 0
+    fi
+    return 1
+}
+
+select_python_bin() {
+    local service_name="$1"
+    local pybin=""
+    pybin="$(service_python_bin "$service_name" || true)"
+    if [ -n "$pybin" ] && [ -x "$pybin" ]; then
+        echo "$pybin"
+        return 0
+    fi
+
+    local conda_meta
+    conda_meta="$(find_preferred_conda_base_python || true)"
+    if [ -n "$conda_meta" ]; then
+        echo "${conda_meta%%|*}"
+        return 0
+    fi
+
     if command -v python3 &>/dev/null; then
         command -v python3
         return 0
@@ -123,7 +177,7 @@ if [ "$MODE" = "server" ] || [ "$MODE" = "all" ]; then
     info "Upgrading server components / 正在升级主服务端..."
     mkdir -p "$INSTALL_DIR/templates"
 
-    SERVER_PYTHON_BIN="$(service_python_bin server-monitor || true)"
+    SERVER_PYTHON_BIN="$(select_python_bin server-monitor || true)"
     if [ -z "$SERVER_PYTHON_BIN" ]; then
         error "Cannot find Python interpreter for server upgrade / 无法确定主服务升级使用的 Python 解释器"
     fi
@@ -163,7 +217,7 @@ fi
 if [ "$MODE" = "agent" ] || [ "$MODE" = "all" ]; then
     info "Upgrading agent / 正在升级 Agent..."
 
-    AGENT_PYTHON_BIN="$(service_python_bin server-monitor-agent || true)"
+    AGENT_PYTHON_BIN="$(select_python_bin server-monitor-agent || true)"
     if [ -z "$AGENT_PYTHON_BIN" ]; then
         error "Cannot find Python interpreter for agent upgrade / 无法确定 Agent 升级使用的 Python 解释器"
     fi

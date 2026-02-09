@@ -24,19 +24,57 @@ info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-detect_python_runtime() {
-    if ! command -v python3 &>/dev/null; then
-        error "Python3 is not installed. Please install Python 3.8+ first.\nPython3 未安装，请先安装 Python 3.8+"
+find_preferred_conda_base_python() {
+    local conda_bin=""
+    local conda_base=""
+    if command -v conda &>/dev/null; then
+        conda_bin="$(command -v conda)"
+        conda_base="$("$conda_bin" info --base 2>/dev/null || true)"
+        if [ -n "$conda_base" ] && [ -x "$conda_base/bin/python" ]; then
+            echo "$conda_base/bin/python|conda"
+            return 0
+        fi
     fi
-    PYTHON_BIN="$(command -v python3)"
+
+    local candidates=(
+        "/opt/conda/bin/python|conda"
+        "/root/miniconda3/bin/python|miniconda"
+        "/root/anaconda3/bin/python|anaconda"
+        "/usr/local/miniconda3/bin/python|miniconda"
+        "/usr/local/anaconda3/bin/python|anaconda"
+    )
+    local item path dist
+    for item in "${candidates[@]}"; do
+        path="${item%%|*}"
+        dist="${item##*|}"
+        if [ -x "$path" ]; then
+            echo "$path|$dist"
+            return 0
+        fi
+    done
+    return 1
+}
+
+detect_python_runtime() {
+    local conda_meta
+    conda_meta="$(find_preferred_conda_base_python || true)"
+    if [ -n "$conda_meta" ]; then
+        PYTHON_BIN="${conda_meta%%|*}"
+        CONDA_DIST="${conda_meta##*|}"
+        PY_RUNTIME="conda"
+        CONDA_ENV_NAME="base"
+    elif command -v python3 &>/dev/null; then
+        PYTHON_BIN="$(command -v python3)"
+        PY_RUNTIME="system"
+    else
+        error "Python3/Conda not found. Please install Python 3.8+ or Conda first.\n未找到 Python3/Conda，请先安装 Python 3.8+ 或 Conda。"
+    fi
+
     PYTHON_VERSION="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
     PYTHON_PREFIX="$("$PYTHON_BIN" -c 'import sys; print(sys.prefix)')"
-    PY_RUNTIME="system"
 
-    if [[ -n "${CONDA_PREFIX:-}" || "$PYTHON_PREFIX" == *"/conda"* || "$PYTHON_PREFIX" == *"/miniconda"* || "$PYTHON_PREFIX" == *"/anaconda"* ]]; then
-        PY_RUNTIME="conda"
-        CONDA_ENV_NAME="${CONDA_DEFAULT_ENV:-$(basename "$PYTHON_PREFIX")}"
-        info "Detected Python $PYTHON_VERSION in Conda env: ${CONDA_ENV_NAME} (${PYTHON_BIN}) / 检测到 Conda Python $PYTHON_VERSION (${CONDA_ENV_NAME})"
+    if [ "$PY_RUNTIME" = "conda" ]; then
+        info "Using Conda base Python $PYTHON_VERSION (${CONDA_DIST}, ${PYTHON_BIN}) / 使用 Conda base Python $PYTHON_VERSION (${CONDA_DIST})"
     else
         info "Detected system Python $PYTHON_VERSION (${PYTHON_BIN}) / 检测到系统 Python $PYTHON_VERSION"
     fi
