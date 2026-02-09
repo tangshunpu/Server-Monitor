@@ -23,6 +23,46 @@ info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
+detect_runtime_from_python() {
+    local pybin="$1"
+    if [ -z "$pybin" ] || [ ! -x "$pybin" ]; then
+        return 1
+    fi
+    local pyver
+    local pyprefix
+    pyver="$("$pybin" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+    pyprefix="$("$pybin" -c 'import sys; print(sys.prefix)' 2>/dev/null || true)"
+    local pyruntime="system"
+    local pyenvname=""
+    if [[ -n "${CONDA_PREFIX:-}" || "$pyprefix" == *"/conda"* || "$pyprefix" == *"/miniconda"* || "$pyprefix" == *"/anaconda"* ]]; then
+        pyruntime="conda"
+        pyenvname="${CONDA_DEFAULT_ENV:-$(basename "$pyprefix")}"
+    fi
+    echo "${pyruntime}|${pyenvname}|${pyver}|${pyprefix}"
+}
+
+service_python_bin() {
+    local service_name="$1"
+    local service_file="/etc/systemd/system/${service_name}.service"
+    if [ -f "$service_file" ]; then
+        local execstart
+        execstart="$(sed -n 's/^ExecStart=//p' "$service_file" | head -1)"
+        if [ -n "$execstart" ]; then
+            local pybin
+            pybin="$(echo "$execstart" | awk '{print $1}')"
+            if [ -x "$pybin" ]; then
+                echo "$pybin"
+                return 0
+            fi
+        fi
+    fi
+    if command -v python3 &>/dev/null; then
+        command -v python3
+        return 0
+    fi
+    return 1
+}
+
 download_file() {
     local url="$1"
     local dest="$2"
@@ -42,6 +82,10 @@ fi
 
 if [ ! -d "$INSTALL_DIR" ]; then
     error "$INSTALL_DIR not found. Please install first.\n$INSTALL_DIR 未找到，请先安装。"
+fi
+
+if ! command -v python3 &>/dev/null; then
+    error "Python3 is not installed. Please install Python 3.8+ first.\nPython3 未安装，请先安装 Python 3.8+"
 fi
 
 # --- Detect installed components / 检测已安装组件 ---
@@ -79,6 +123,22 @@ if [ "$MODE" = "server" ] || [ "$MODE" = "all" ]; then
     info "Upgrading server components / 正在升级主服务端..."
     mkdir -p "$INSTALL_DIR/templates"
 
+    SERVER_PYTHON_BIN="$(service_python_bin server-monitor || true)"
+    if [ -z "$SERVER_PYTHON_BIN" ]; then
+        error "Cannot find Python interpreter for server upgrade / 无法确定主服务升级使用的 Python 解释器"
+    fi
+    SERVER_RUNTIME_META="$(detect_runtime_from_python "$SERVER_PYTHON_BIN" || true)"
+    SERVER_RUNTIME="${SERVER_RUNTIME_META%%|*}"
+    SERVER_REST="${SERVER_RUNTIME_META#*|}"
+    SERVER_ENV_NAME="${SERVER_REST%%|*}"
+    SERVER_REST="${SERVER_REST#*|}"
+    SERVER_PY_VERSION="${SERVER_REST%%|*}"
+    if [ "$SERVER_RUNTIME" = "conda" ]; then
+        info "Server Python: conda (${SERVER_ENV_NAME:-unknown}) ${SERVER_PY_VERSION:-unknown} (${SERVER_PYTHON_BIN})"
+    else
+        info "Server Python: system ${SERVER_PY_VERSION:-unknown} (${SERVER_PYTHON_BIN})"
+    fi
+
     download_file "$REPO_URL/app.py"                   "$INSTALL_DIR/app.py"
     download_file "$REPO_URL/requirements.txt"         "$INSTALL_DIR/requirements.txt"
     download_file "$REPO_URL/templates/login.html"     "$INSTALL_DIR/templates/login.html"
@@ -88,7 +148,7 @@ if [ "$MODE" = "server" ] || [ "$MODE" = "all" ]; then
     download_file "$REPO_URL/templates/user.html"      "$INSTALL_DIR/templates/user.html"
 
     info "Installing/updating Python dependencies / 安装/更新依赖..."
-    pip install -q flask pyyaml
+    "$SERVER_PYTHON_BIN" -m pip install -q flask pyyaml
 
     if $HAS_SERVER; then
         info "Restarting server-monitor service / 重启 server-monitor 服务..."
@@ -103,10 +163,26 @@ fi
 if [ "$MODE" = "agent" ] || [ "$MODE" = "all" ]; then
     info "Upgrading agent / 正在升级 Agent..."
 
+    AGENT_PYTHON_BIN="$(service_python_bin server-monitor-agent || true)"
+    if [ -z "$AGENT_PYTHON_BIN" ]; then
+        error "Cannot find Python interpreter for agent upgrade / 无法确定 Agent 升级使用的 Python 解释器"
+    fi
+    AGENT_RUNTIME_META="$(detect_runtime_from_python "$AGENT_PYTHON_BIN" || true)"
+    AGENT_RUNTIME="${AGENT_RUNTIME_META%%|*}"
+    AGENT_REST="${AGENT_RUNTIME_META#*|}"
+    AGENT_ENV_NAME="${AGENT_REST%%|*}"
+    AGENT_REST="${AGENT_REST#*|}"
+    AGENT_PY_VERSION="${AGENT_REST%%|*}"
+    if [ "$AGENT_RUNTIME" = "conda" ]; then
+        info "Agent Python: conda (${AGENT_ENV_NAME:-unknown}) ${AGENT_PY_VERSION:-unknown} (${AGENT_PYTHON_BIN})"
+    else
+        info "Agent Python: system ${AGENT_PY_VERSION:-unknown} (${AGENT_PYTHON_BIN})"
+    fi
+
     download_file "$REPO_URL/agent.py" "$INSTALL_DIR/agent.py"
 
     info "Installing/updating Python dependencies / 安装/更新依赖..."
-    pip install -q psutil requests pyyaml
+    "$AGENT_PYTHON_BIN" -m pip install -q psutil requests pyyaml
 
     if $HAS_AGENT; then
         info "Restarting server-monitor-agent service / 重启 server-monitor-agent 服务..."

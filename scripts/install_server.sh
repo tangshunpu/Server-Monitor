@@ -24,18 +24,35 @@ info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
+detect_python_runtime() {
+    if ! command -v python3 &>/dev/null; then
+        error "Python3 is not installed. Please install Python 3.8+ first.\nPython3 未安装，请先安装 Python 3.8+"
+    fi
+    PYTHON_BIN="$(command -v python3)"
+    PYTHON_VERSION="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+    PYTHON_PREFIX="$("$PYTHON_BIN" -c 'import sys; print(sys.prefix)')"
+    PY_RUNTIME="system"
+
+    if [[ -n "${CONDA_PREFIX:-}" || "$PYTHON_PREFIX" == *"/conda"* || "$PYTHON_PREFIX" == *"/miniconda"* || "$PYTHON_PREFIX" == *"/anaconda"* ]]; then
+        PY_RUNTIME="conda"
+        CONDA_ENV_NAME="${CONDA_DEFAULT_ENV:-$(basename "$PYTHON_PREFIX")}"
+        info "Detected Python $PYTHON_VERSION in Conda env: ${CONDA_ENV_NAME} (${PYTHON_BIN}) / 检测到 Conda Python $PYTHON_VERSION (${CONDA_ENV_NAME})"
+    else
+        info "Detected system Python $PYTHON_VERSION (${PYTHON_BIN}) / 检测到系统 Python $PYTHON_VERSION"
+    fi
+
+    if ! "$PYTHON_BIN" -m pip --version &>/dev/null; then
+        error "pip is not available for ${PYTHON_BIN}. Please install pip first.\n${PYTHON_BIN} 缺少 pip，请先安装。"
+    fi
+}
+
 # --- Check root / 检查 root 权限 ---
 if [ "$EUID" -ne 0 ]; then
     error "Please run as root (sudo) / 请使用 root 权限运行 (sudo)"
 fi
 
-# --- Check Python3 / 检查 Python3 ---
-if ! command -v python3 &>/dev/null; then
-    error "Python3 is not installed. Please install Python 3.8+ first.\nPython3 未安装，请先安装 Python 3.8+"
-fi
-
-PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-info "Found Python $PYTHON_VERSION / 检测到 Python $PYTHON_VERSION"
+# --- Check Python runtime / 检查 Python 运行时 ---
+detect_python_runtime
 
 # --- Create install directory / 创建安装目录 ---
 info "Installing to $INSTALL_DIR / 安装到 $INSTALL_DIR"
@@ -70,8 +87,8 @@ if [ ! -f "$INSTALL_DIR/config.yaml" ]; then
 
     # Generate random secret key and token
     # 生成随机密钥和令牌
-    SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-    AGENT_TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(24))")
+    SECRET_KEY=$("$PYTHON_BIN" -c "import secrets; print(secrets.token_hex(32))")
+    AGENT_TOKEN=$("$PYTHON_BIN" -c "import secrets; print(secrets.token_hex(24))")
 
     # Prompt for admin credentials / 提示输入管理员凭据
     # Use /dev/tty when piped (curl | bash) so read doesn't consume the script from stdin
@@ -132,8 +149,8 @@ ACTUAL_PORT=$(grep -E '^[[:space:]]*port:' "$INSTALL_DIR/config.yaml" 2>/dev/nul
 ACTUAL_PORT=${ACTUAL_PORT:-5100}
 
 # --- Install Python dependencies / 安装 Python 依赖 ---
-info "Installing Python dependencies / 正在安装 Python 依赖..."
-pip install -q flask pyyaml
+info "Installing Python dependencies with ${PYTHON_BIN} / 使用 ${PYTHON_BIN} 安装 Python 依赖..."
+"$PYTHON_BIN" -m pip install -q flask pyyaml
 
 # --- Create systemd service / 创建 systemd 服务 ---
 info "Creating systemd service / 正在创建 systemd 服务..."
@@ -147,10 +164,11 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=$(which python3) ${INSTALL_DIR}/app.py
+ExecStart=${PYTHON_BIN} ${INSTALL_DIR}/app.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHON_RUNTIME=${PY_RUNTIME}
 
 [Install]
 WantedBy=multi-user.target
