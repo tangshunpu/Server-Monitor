@@ -329,25 +329,62 @@
         }
 
         /* ===== Server Grid ===== */
-        .server-grid {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(360px, 1fr));
-            gap: 20px;
+        .detail-carousel {
+            position: relative;
         }
+
+        .server-grid {
+            display: flex;
+            gap: 20px;
+            overflow-x: auto;
+            scroll-behavior: smooth;
+            padding: 2px 46px 10px;
+            scrollbar-width: thin;
+        }
+
+        .detail-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 32px;
+            height: 32px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 5;
+            box-shadow: 0 2px 6px var(--shadow);
+            transition: all 0.2s;
+        }
+
+        .detail-nav:hover {
+            color: var(--text-primary);
+            border-color: var(--text-secondary);
+        }
+
+        .detail-nav:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+        }
+
+        .detail-nav.prev { left: 6px; }
+        .detail-nav.next { right: 6px; }
 
         @media (max-width: 1680px) {
             .overview { grid-template-columns: repeat(3, minmax(360px, 1fr)); }
-            .server-grid { grid-template-columns: repeat(3, minmax(360px, 1fr)); }
         }
 
         @media (max-width: 1320px) {
             .overview { grid-template-columns: repeat(2, minmax(320px, 1fr)); }
-            .server-grid { grid-template-columns: repeat(2, minmax(320px, 1fr)); }
         }
 
         @media (max-width: 560px) {
-            .server-grid { grid-template-columns: 1fr; }
             .overview { grid-template-columns: 1fr; }
+            .server-grid { padding-left: 40px; padding-right: 40px; }
         }
 
         /* ===== Server Card ===== */
@@ -357,9 +394,33 @@
             border-radius: 12px;
             overflow: hidden;
             transition: border-color 0.2s, background 0.3s;
+            flex: 0 0 calc((100% - 60px) / 4);
+            min-width: 360px;
+        }
+
+        @media (max-width: 1680px) {
+            .server-card { flex-basis: calc((100% - 40px) / 3); }
+        }
+
+        @media (max-width: 1320px) {
+            .server-card {
+                flex-basis: calc((100% - 20px) / 2);
+                min-width: 320px;
+            }
+        }
+
+        @media (max-width: 560px) {
+            .server-card {
+                flex-basis: 100%;
+                min-width: 260px;
+            }
         }
 
         .server-card:hover { border-color: var(--text-muted); }
+        .server-card.focused {
+            border-color: var(--blue);
+            box-shadow: 0 0 0 2px rgba(88,166,255,0.25);
+        }
         .server-card.offline { opacity: 0.65; }
         .server-card.maintenance { border-left: 3px solid var(--blue); }
         .server-card.fault { border-left: 3px solid var(--red); }
@@ -748,6 +809,7 @@ let currentUser = {{ current_user | tojson }};
 let refreshInterval = 30;
 let countdown = refreshInterval;
 let deleteServerId = null;
+let detailResizeBound = false;
 
 // ---------------------------------------------------------------------------
 // Theme Toggle
@@ -864,7 +926,7 @@ function renderOverview(data) {
             ${renderNetPill('🌍 国际', globalOk)}
         </div>`;
 
-        return `<div class="overview-card status-${st}">
+        return `<div class="overview-card status-${st}" onclick="focusDetailServer(${s.id})">
             <span class="ov-dot ${st}"></span>
             <div class="ov-info">
                 <div class="ov-hostname">${s.hostname} ${statusLabel}</div>
@@ -1072,7 +1134,7 @@ function renderServerCard(server) {
         metricsHTML = `<div class="no-metrics">${errorsHTML || 'Waiting for agent data...'}</div>`;
     }
 
-    return `<div class="server-card ${st}">
+    return `<div class="server-card ${st}" data-server-id="${s.id}">
         <div class="card-header">
             <div class="card-header-left">
                 <span class="status-dot ${st}"></span>
@@ -1131,7 +1193,55 @@ function renderDashboard(data) {
         <span>${data.length} server(s)</span>`;
 
     renderOverview(data);
-    container.innerHTML = `<div class="server-grid">${data.map(renderServerCard).join('')}</div>`;
+    container.innerHTML = `<div class="detail-carousel">
+        <button class="detail-nav prev" id="detailPrev" onclick="scrollDetail(-1)">&#x2039;</button>
+        <div class="server-grid" id="detailStrip">${data.map(renderServerCard).join('')}</div>
+        <button class="detail-nav next" id="detailNext" onclick="scrollDetail(1)">&#x203A;</button>
+    </div>`;
+    bindDetailNav();
+}
+
+function scrollDetail(direction) {
+    const strip = document.getElementById('detailStrip');
+    if (!strip) return;
+    const card = strip.querySelector('.server-card');
+    const gap = 20;
+    const step = card ? ((card.getBoundingClientRect().width + gap) * 2) : (strip.clientWidth * 0.9);
+    strip.scrollBy({ left: direction * step, behavior: 'smooth' });
+}
+
+function updateDetailNav() {
+    const strip = document.getElementById('detailStrip');
+    const prev = document.getElementById('detailPrev');
+    const next = document.getElementById('detailNext');
+    if (!strip || !prev || !next) return;
+    const maxScroll = strip.scrollWidth - strip.clientWidth;
+    const canScroll = maxScroll > 2;
+    prev.style.display = canScroll ? 'flex' : 'none';
+    next.style.display = canScroll ? 'flex' : 'none';
+    prev.disabled = strip.scrollLeft <= 2;
+    next.disabled = strip.scrollLeft >= (maxScroll - 2);
+}
+
+function bindDetailNav() {
+    const strip = document.getElementById('detailStrip');
+    if (!strip) return;
+    strip.addEventListener('scroll', updateDetailNav, { passive: true });
+    if (!detailResizeBound) {
+        window.addEventListener('resize', updateDetailNav);
+        detailResizeBound = true;
+    }
+    requestAnimationFrame(updateDetailNav);
+}
+
+function focusDetailServer(serverId) {
+    const strip = document.getElementById('detailStrip');
+    if (!strip) return;
+    const card = strip.querySelector(`.server-card[data-server-id="${serverId}"]`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    card.classList.add('focused');
+    setTimeout(() => card.classList.remove('focused'), 1200);
 }
 
 // ---------------------------------------------------------------------------
