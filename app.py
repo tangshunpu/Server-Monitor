@@ -123,6 +123,14 @@ def init_db():
         FOREIGN KEY (user_id)   REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
     )''')
+    db.execute('''CREATE TABLE IF NOT EXISTS user_gpu_access (
+        user_id     INTEGER NOT NULL,
+        server_id   INTEGER NOT NULL,
+        gpu_bus_id  TEXT NOT NULL,
+        PRIMARY KEY (user_id, server_id, gpu_bus_id),
+        FOREIGN KEY (user_id)   REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+    )''')
     db.execute('''CREATE TABLE IF NOT EXISTS user_server_preferences (
         user_id     INTEGER NOT NULL,
         server_id   INTEGER NOT NULL,
@@ -159,6 +167,15 @@ def init_db():
         key         TEXT PRIMARY KEY,
         value       TEXT NOT NULL DEFAULT ''
     )''')
+    db.execute('''CREATE TABLE IF NOT EXISTS gpu_admin_status (
+        server_id            INTEGER NOT NULL,
+        gpu_bus_id           TEXT NOT NULL,
+        admin_status         TEXT NOT NULL DEFAULT 'normal',
+        admin_status_note    TEXT DEFAULT '',
+        updated_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (server_id, gpu_bus_id),
+        FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+    )''')
 
     # --- Schema migration: servers hostname unique -> mac unique ---
     _migrate_servers_table_for_mac_identity(db)
@@ -190,6 +207,10 @@ def init_db():
         db.execute('ALTER TABLE invites ADD COLUMN max_uses INTEGER NOT NULL DEFAULT 1')
     if 'used_count' not in icols:
         db.execute('ALTER TABLE invites ADD COLUMN used_count INTEGER NOT NULL DEFAULT 0')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_user_gpu_access_user_server '
+               'ON user_gpu_access(user_id, server_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_gpu_admin_status_server '
+               'ON gpu_admin_status(server_id)')
     _set_setting(db, 'registration_email_suffix_enabled',
                  _get_setting(db, 'registration_email_suffix_enabled', '0'))
     _set_setting(db, 'registration_email_allowed_suffixes',
@@ -303,6 +324,10 @@ def _parse_allowed_suffixes(raw):
     return sorted(set(suffixes))
 
 
+def _normalize_bus_id(bus_id):
+    return (bus_id or '').strip().lower()
+
+
 def _get_setting(db, key, default=''):
     row = db.execute('SELECT value FROM app_settings WHERE key=?', (key,)).fetchone()
     return row['value'] if row else default
@@ -320,6 +345,65 @@ def _registration_email_policy(db):
     enabled = _get_setting(db, 'registration_email_suffix_enabled', '0') == '1'
     raw = _get_setting(db, 'registration_email_allowed_suffixes', '')
     return enabled, _parse_allowed_suffixes(raw), raw
+
+
+def _load_gpu_admin_status_map(db, server_ids):
+    if not server_ids:
+        return {}
+    placeholders = ','.join(['?'] * len(server_ids))
+    rows = db.execute(
+        f'''SELECT server_id, gpu_bus_id, admin_status, admin_status_note
+            FROM gpu_admin_status
+            WHERE server_id IN ({placeholders})''',
+        tuple(server_ids)
+    ).fetchall()
+    return {
+        (r['server_id'], _normalize_bus_id(r['gpu_bus_id'])): (
+            r['admin_status'] or 'normal',
+            r['admin_status_note'] or ''
+        )
+        for r in rows
+    }
+
+
+def _load_user_gpu_access_map(db, user_id):
+    rows = db.execute(
+        'SELECT server_id, gpu_bus_id FROM user_gpu_access WHERE user_id = ?',
+        (user_id,)
+    ).fetchall()
+    gpu_map = {}
+    for r in rows:
+        sid = r['server_id']
+        gpu_map.setdefault(sid, set()).add(_normalize_bus_id(r['gpu_bus_id']))
+    return gpu_map
+
+
+def _latest_server_gpu_inventory(db, server_id):
+    row = db.execute(
+        'SELECT gpu_data FROM metrics WHERE server_id=? ORDER BY timestamp DESC LIMIT 1',
+        (server_id,)
+    ).fetchone()
+    if not row or not row['gpu_data']:
+        return []
+    try:
+        raw = json.loads(row['gpu_data'])
+    except json.JSONDecodeError:
+        return []
+    inventory = []
+    for g in raw:
+        bus_id = _normalize_bus_id(g.get('bus_id'))
+        if not bus_id:
+            continue
+        inventory.append({
+            'bus_id': bus_id,
+            'name': g.get('name') or 'GPU',
+            'index': g.get('index'),
+        })
+    # Deduplicate by bus_id
+    dedup = {}
+    for g in inventory:
+        dedup[g['bus_id']] = g
+    return [dedup[k] for k in sorted(dedup.keys())]
 
 
 def _hash_user_agent_token(token):
@@ -587,10 +671,27 @@ def api_server_history(server_id):
            ORDER BY timestamp''',
         (server_id, cutoff)
     ).fetchall()
+    gpu_status_map = _load_gpu_admin_status_map(db, [server_id])
+    allowed_gpu_bus_ids = None
+    if g.user['role'] != 'admin':
+        user_gpu_map = _load_user_gpu_access_map(db, g.user['id'])
+        if server_id in user_gpu_map:
+            allowed_gpu_bus_ids = user_gpu_map[server_id]
 
     result = []
     for m in rows:
         gpu_data = json.loads(m['gpu_data']) if m['gpu_data'] else []
+        normalized_gpu_data = []
+        for gpu in gpu_data:
+            bus_id = _normalize_bus_id(gpu.get('bus_id'))
+            if allowed_gpu_bus_ids is not None and bus_id not in allowed_gpu_bus_ids:
+                continue
+            st, note = gpu_status_map.get((server_id, bus_id), ('normal', ''))
+            gpu['bus_id'] = bus_id or gpu.get('bus_id')
+            gpu['admin_status'] = st
+            gpu['admin_status_note'] = note
+            normalized_gpu_data.append(gpu)
+        gpu_data = normalized_gpu_data
         if not g.user.get('can_view_processes'):
             for gpu in gpu_data:
                 gpu.pop('processes', None)
@@ -848,6 +949,14 @@ def api_admin_list_users():
             'SELECT server_id FROM user_server_access WHERE user_id = ?', (u['id'],)
         ).fetchall()
         server_ids = [a['server_id'] for a in access]
+        gpu_rows = db.execute(
+            'SELECT server_id, gpu_bus_id FROM user_gpu_access WHERE user_id = ? ORDER BY server_id, gpu_bus_id',
+            (u['id'],)
+        ).fetchall()
+        gpu_access = {}
+        for g in gpu_rows:
+            sid = str(g['server_id'])
+            gpu_access.setdefault(sid, []).append(_normalize_bus_id(g['gpu_bus_id']))
 
         result.append({
             'id':                 u['id'],
@@ -856,6 +965,7 @@ def api_admin_list_users():
             'role':               u['role'],
             'can_view_processes': u['can_view_processes'],
             'server_ids':         server_ids,
+            'gpu_access':         gpu_access,
             'created_at':         u['created_at'],
         })
     return jsonify(result)
@@ -873,6 +983,7 @@ def api_admin_create_user():
     role = data.get('role', 'user')
     can_view = 1 if data.get('can_view_processes') else 0
     server_ids = data.get('server_ids', [])
+    gpu_access = data.get('gpu_access', {}) or {}
     if not email:
         return jsonify({'error': 'Email is required / 邮箱为必填项'}), 400
     if not _is_valid_email(email):
@@ -904,6 +1015,30 @@ def api_admin_create_user():
             'INSERT OR IGNORE INTO user_server_access (user_id, server_id) VALUES (?, ?)',
             (new_id, sid)
         )
+    # Optional per-server GPU restrictions: if absent for a server => all GPUs visible
+    if isinstance(gpu_access, dict):
+        allowed_servers = set()
+        for s in server_ids:
+            try:
+                allowed_servers.add(int(s))
+            except (TypeError, ValueError):
+                continue
+        for sid_raw, bus_list in gpu_access.items():
+            try:
+                sid = int(sid_raw)
+            except (TypeError, ValueError):
+                continue
+            if sid not in allowed_servers or not isinstance(bus_list, list):
+                continue
+            for bus in bus_list:
+                bus_id = _normalize_bus_id(bus)
+                if not bus_id:
+                    continue
+                db.execute(
+                    '''INSERT OR IGNORE INTO user_gpu_access (user_id, server_id, gpu_bus_id)
+                       VALUES (?, ?, ?)''',
+                    (new_id, sid, bus_id)
+                )
     db.commit()
 
     return jsonify({
@@ -948,6 +1083,32 @@ def api_admin_update_user(user_id):
                 'INSERT OR IGNORE INTO user_server_access (user_id, server_id) VALUES (?, ?)',
                 (user_id, sid)
             )
+        # Server list changed -> reset all GPU restrictions, then re-apply from payload.
+        db.execute('DELETE FROM user_gpu_access WHERE user_id = ?', (user_id,))
+        gpu_access = data.get('gpu_access', {}) or {}
+        if isinstance(gpu_access, dict):
+            allowed_servers = set()
+            for s in data['server_ids']:
+                try:
+                    allowed_servers.add(int(s))
+                except (TypeError, ValueError):
+                    continue
+            for sid_raw, bus_list in gpu_access.items():
+                try:
+                    sid = int(sid_raw)
+                except (TypeError, ValueError):
+                    continue
+                if sid not in allowed_servers or not isinstance(bus_list, list):
+                    continue
+                for bus in bus_list:
+                    bus_id = _normalize_bus_id(bus)
+                    if not bus_id:
+                        continue
+                    db.execute(
+                        '''INSERT OR IGNORE INTO user_gpu_access (user_id, server_id, gpu_bus_id)
+                           VALUES (?, ?, ?)''',
+                        (user_id, sid, bus_id)
+                    )
 
     db.commit()
     return jsonify({'status': 'ok'})
@@ -970,6 +1131,7 @@ def api_admin_delete_user(user_id):
             return jsonify({'error': 'Cannot delete the last admin / 不能删除最后一个管理员'}), 400
 
     db.execute('DELETE FROM user_server_access WHERE user_id = ?', (user_id,))
+    db.execute('DELETE FROM user_gpu_access WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM users WHERE id = ?', (user_id,))
     db.commit()
     return jsonify({'status': 'ok'})
@@ -1089,16 +1251,96 @@ def api_admin_servers():
            FROM servers
            ORDER BY COALESCE(NULLIF(display_name, ''), hostname)'''
     ).fetchall()
-    return jsonify([{
-        'id': s['id'],
-        'hostname': s['display_name'] or s['hostname'],
-        'raw_hostname': s['hostname'],
-        'display_name': s['display_name'] or '',
-        'mac_address': s['mac_address'] or '',
-        'ip': s['ip'],
-        'admin_status': s['admin_status'] or 'normal',
-        'admin_status_note': s['admin_status_note'] or '',
-    } for s in servers])
+    server_ids = [s['id'] for s in servers]
+    gpu_status_map = _load_gpu_admin_status_map(db, server_ids)
+    result = []
+    for s in servers:
+        inventory = _latest_server_gpu_inventory(db, s['id'])
+        gpus = []
+        for g in inventory:
+            st, note = gpu_status_map.get((s['id'], g['bus_id']), ('normal', ''))
+            gpus.append({
+                'bus_id': g['bus_id'],
+                'name': g['name'],
+                'index': g['index'],
+                'admin_status': st,
+                'admin_status_note': note,
+            })
+        result.append({
+            'id': s['id'],
+            'hostname': s['display_name'] or s['hostname'],
+            'raw_hostname': s['hostname'],
+            'display_name': s['display_name'] or '',
+            'mac_address': s['mac_address'] or '',
+            'ip': s['ip'],
+            'admin_status': s['admin_status'] or 'normal',
+            'admin_status_note': s['admin_status_note'] or '',
+            'gpus': gpus,
+        })
+    return jsonify(result)
+
+
+@app.route('/api/admin/servers/<int:server_id>/gpus')
+@admin_required
+def api_admin_server_gpus(server_id):
+    db = get_db()
+    srv = db.execute(
+        'SELECT id, hostname, display_name FROM servers WHERE id=?',
+        (server_id,)
+    ).fetchone()
+    if not srv:
+        return jsonify({'error': 'Server not found'}), 404
+    inventory = _latest_server_gpu_inventory(db, server_id)
+    gpu_status_map = _load_gpu_admin_status_map(db, [server_id])
+    gpus = []
+    for g in inventory:
+        st, note = gpu_status_map.get((server_id, g['bus_id']), ('normal', ''))
+        gpus.append({
+            'bus_id': g['bus_id'],
+            'name': g['name'],
+            'index': g['index'],
+            'admin_status': st,
+            'admin_status_note': note,
+        })
+    return jsonify({
+        'server_id': server_id,
+        'hostname': srv['display_name'] or srv['hostname'],
+        'gpus': gpus,
+    })
+
+
+@app.route('/api/admin/servers/<int:server_id>/gpus/status', methods=['PUT'])
+@admin_required
+def api_admin_set_gpu_status(server_id):
+    data = request.get_json(silent=True) or {}
+    bus_id = _normalize_bus_id(data.get('gpu_bus_id'))
+    admin_status = (data.get('admin_status') or 'normal').strip()
+    admin_note = (data.get('admin_status_note') or '').strip()
+    if not bus_id:
+        return jsonify({'error': 'gpu_bus_id is required'}), 400
+    if admin_status not in ('normal', 'maintenance', 'fault'):
+        return jsonify({'error': 'Invalid status'}), 400
+    db = get_db()
+    srv = db.execute('SELECT id FROM servers WHERE id=?', (server_id,)).fetchone()
+    if not srv:
+        return jsonify({'error': 'Server not found'}), 404
+    if admin_status == 'normal' and not admin_note:
+        db.execute(
+            'DELETE FROM gpu_admin_status WHERE server_id=? AND gpu_bus_id=?',
+            (server_id, bus_id)
+        )
+    else:
+        db.execute(
+            '''INSERT INTO gpu_admin_status (server_id, gpu_bus_id, admin_status, admin_status_note, updated_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(server_id, gpu_bus_id) DO UPDATE
+               SET admin_status=excluded.admin_status,
+                   admin_status_note=excluded.admin_status_note,
+                   updated_at=excluded.updated_at''',
+            (server_id, bus_id, admin_status, admin_note, datetime.now().isoformat())
+        )
+    db.commit()
+    return jsonify({'status': 'ok'})
 
 
 @app.route('/api/admin/servers/<int:server_id>/name', methods=['PUT'])
@@ -1351,6 +1593,11 @@ def _build_server_data(user):
         ).fetchall()
 
     can_view_procs = bool(user.get('can_view_processes'))
+    server_ids = [s['id'] for s in servers]
+    gpu_status_map = _load_gpu_admin_status_map(db, server_ids)
+    user_gpu_map = {}
+    if user['role'] != 'admin':
+        user_gpu_map = _load_user_gpu_access_map(db, user['id'])
     alias_rows = db.execute(
         'SELECT server_id, alias_name FROM user_server_preferences WHERE user_id = ?',
         (user['id'],)
@@ -1419,6 +1666,20 @@ def _build_server_data(user):
 
         if latest:
             gpu_data = json.loads(latest['gpu_data']) if latest['gpu_data'] else []
+            allowed_gpu_bus_ids = None
+            if user['role'] != 'admin' and s['id'] in user_gpu_map:
+                allowed_gpu_bus_ids = user_gpu_map[s['id']]
+            merged_gpu_data = []
+            for gpu in gpu_data:
+                bus_id = _normalize_bus_id(gpu.get('bus_id'))
+                if allowed_gpu_bus_ids is not None and bus_id not in allowed_gpu_bus_ids:
+                    continue
+                st, note = gpu_status_map.get((s['id'], bus_id), ('normal', ''))
+                gpu['bus_id'] = bus_id or gpu.get('bus_id')
+                gpu['admin_status'] = st
+                gpu['admin_status_note'] = note
+                merged_gpu_data.append(gpu)
+            gpu_data = merged_gpu_data
 
             # Strip processes if user lacks permission / 无权限时去除进程列表
             if not can_view_procs:

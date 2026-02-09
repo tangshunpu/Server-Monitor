@@ -86,6 +86,18 @@
         .server-select { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
         .server-chip { padding:4px 10px; border-radius:6px; font-size:12px; cursor:pointer; border:1px solid var(--border); background:var(--bg-inner); color:var(--text-secondary); transition:all .15s; }
         .server-chip.selected { background:var(--blue); color:#fff; border-color:var(--blue); }
+        .gpu-access-wrap { margin-top:8px; display:flex; flex-direction:column; gap:8px; }
+        .gpu-access-group { border:1px solid var(--border); border-radius:8px; padding:8px; background:var(--bg-inner); }
+        .gpu-access-title { font-size:12px; color:var(--text-secondary); margin-bottom:6px; }
+        .gpu-chip { display:inline-flex; margin:2px 4px 2px 0; padding:3px 8px; border-radius:999px; font-size:11px; border:1px solid var(--border); color:var(--text-secondary); cursor:pointer; }
+        .gpu-chip.selected { background:var(--orange); color:#fff; border-color:var(--orange); }
+        .gpu-hint { font-size:11px; color:var(--text-muted); margin-top:4px; }
+        .gpu-row { border:1px solid var(--border); border-radius:8px; padding:8px; margin-bottom:8px; background:var(--bg-inner); }
+        .gpu-row-top { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:6px; }
+        .gpu-row-name { font-size:12px; color:var(--text-primary); font-weight:600; }
+        .gpu-row-meta { font-size:11px; color:var(--text-secondary); }
+        .gpu-row-controls { display:flex; gap:8px; align-items:center; }
+        .gpu-row-controls select, .gpu-row-controls input { font-size:12px; padding:6px 8px; }
         .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:20px; }
         .result-box { background:var(--bg-inner); border:1px solid var(--border); border-radius:8px; padding:14px; margin-top:14px; }
         .result-box .label { font-size:12px; color:var(--text-muted); margin-bottom:4px; }
@@ -233,6 +245,18 @@
     </div>
 </div>
 
+<!-- GPU Status Modal -->
+<div class="modal-overlay" id="gpuStatusModal">
+    <div class="modal" style="max-width:720px;">
+        <h3>GPU Status Management</h3>
+        <p style="color:var(--text-secondary);font-size:14px;margin-bottom:12px" id="gsHostname"></p>
+        <div id="gsGpuList"></div>
+        <div class="modal-actions">
+            <button class="btn" onclick="closeModal('gpuStatusModal')">Close</button>
+        </div>
+    </div>
+</div>
+
 <!-- Announcement Modal -->
 <div class="modal-overlay" id="annModal">
     <div class="modal">
@@ -281,6 +305,8 @@
         <div class="form-group">
             <label>Server Access</label>
             <div class="server-select" id="umServers"></div>
+            <div class="gpu-hint">For each selected server: no GPU selected means all GPUs are visible.</div>
+            <div class="gpu-access-wrap" id="umGpuAccess"></div>
         </div>
         <div id="userResult"></div>
         <div class="modal-actions">
@@ -351,6 +377,9 @@ let allServers = [];
 let editingUserId = null;
 let resetUserId = null;
 let namingServerId = null;
+let editingUserGpuAccess = {};
+let gpuStatusServerId = null;
+let gpuStatusRows = [];
 
 // ---------------------------------------------------------------------------
 // Theme
@@ -439,6 +468,10 @@ function loadUsers() {
                 const names = u.server_ids.map(sid => { const s=allServers.find(x=>x.id===sid); return s?s.hostname:'#'+sid; });
                 serverHTML = '<div class="server-tags">'+names.map(n=>'<span class="server-tag">'+n+'</span>').join('')+'</div>';
             }
+            const gpuRestrictCount = Object.keys(u.gpu_access || {}).length;
+            if (gpuRestrictCount > 0) {
+                serverHTML += `<div style="font-size:11px;color:var(--orange);margin-top:4px;">GPU-limited on ${gpuRestrictCount} server(s)</div>`;
+            }
             const userLabel = `<div><strong>${u.username}</strong></div><div style="font-size:12px;color:var(--text-secondary)">${u.email || '-'}</div>`;
             return `<tr>
                 <td>${userLabel}</td>
@@ -494,12 +527,80 @@ function renderServerChips(containerId, selected=[]) {
         const sel = selected.includes(s.id) ? 'selected' : '';
         return `<span class="server-chip ${sel}" data-sid="${s.id}" onclick="toggleChip(this)">${s.hostname}</span>`;
     }).join('') || '<span style="color:var(--text-muted);font-size:12px">No servers registered yet</span>';
+    if (containerId === 'umServers') {
+        renderGpuAccessEditor();
+    }
 }
 
-function toggleChip(el) { el.classList.toggle('selected'); }
+function toggleChip(el) {
+    if (el.parentElement && el.parentElement.id === 'umServers') {
+        snapshotGpuAccessEditor();
+    }
+    el.classList.toggle('selected');
+    if (el.parentElement && el.parentElement.id === 'umServers') {
+        renderGpuAccessEditor();
+    }
+}
 
 function getSelectedServerIds(containerId) {
     return [...document.querySelectorAll('#'+containerId+' .server-chip.selected')].map(c=>parseInt(c.dataset.sid));
+}
+
+function getGpuAccessFromEditor(selectedServerIds) {
+    const result = {};
+    selectedServerIds.forEach(sid => {
+        const box = document.querySelector(`.gpu-access-group[data-sid="${sid}"]`);
+        if (!box) return;
+        const allChips = [...box.querySelectorAll('.gpu-chip')];
+        const selected = allChips.filter(ch => ch.classList.contains('selected')).map(ch => ch.dataset.busId);
+        // none selected or all selected => no restriction (all visible)
+        if (selected.length === 0 || selected.length === allChips.length) return;
+        result[String(sid)] = selected;
+    });
+    return result;
+}
+
+function snapshotGpuAccessEditor() {
+    const groups = [...document.querySelectorAll('#umGpuAccess .gpu-access-group')];
+    const next = {};
+    groups.forEach(g => {
+        const sid = g.dataset.sid;
+        const selected = [...g.querySelectorAll('.gpu-chip.selected')].map(ch => ch.dataset.busId);
+        if (selected.length > 0) next[sid] = selected;
+    });
+    editingUserGpuAccess = next;
+}
+
+function renderGpuAccessEditor() {
+    const wrap = document.getElementById('umGpuAccess');
+    const selectedServerIds = getSelectedServerIds('umServers');
+    if (selectedServerIds.length === 0) {
+        wrap.innerHTML = '';
+        return;
+    }
+    wrap.innerHTML = selectedServerIds.map(sid => {
+        const srv = allServers.find(s => s.id === sid);
+        if (!srv) return '';
+        const gpus = srv.gpus || [];
+        if (gpus.length === 0) {
+            return `<div class="gpu-access-group" data-sid="${sid}">
+                <div class="gpu-access-title">${srv.hostname}</div>
+                <div class="gpu-hint">No GPU discovered yet on this server.</div>
+            </div>`;
+        }
+        const selectedBus = new Set((editingUserGpuAccess[String(sid)] || []).map(x => String(x).toLowerCase()));
+        const chips = gpus.map(g => {
+            const bus = (g.bus_id || '').toLowerCase();
+            const sel = selectedBus.has(bus) ? 'selected' : '';
+            const label = `${g.name || 'GPU'} (${bus})`;
+            return `<span class="gpu-chip ${sel}" data-bus-id="${bus}" onclick="this.classList.toggle('selected')">${label}</span>`;
+        }).join('');
+        return `<div class="gpu-access-group" data-sid="${sid}">
+            <div class="gpu-access-title">${srv.hostname}</div>
+            <div>${chips}</div>
+            <div class="gpu-hint">Select specific GPUs to limit visibility.</div>
+        </div>`;
+    }).join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -509,6 +610,7 @@ function closeModal(id) { document.getElementById(id).classList.remove('active')
 
 function openCreateUser() {
     editingUserId = null;
+    editingUserGpuAccess = {};
     document.getElementById('userModalTitle').textContent = 'Create User';
     document.getElementById('userModalBtn').textContent = 'Create';
     document.getElementById('userModalBtn').style.display = '';
@@ -528,6 +630,7 @@ function openEditUser(uid) {
         const u = users.find(x=>x.id===uid);
         if(!u) return;
         editingUserId = uid;
+        editingUserGpuAccess = u.gpu_access || {};
         document.getElementById('userModalTitle').textContent = 'Edit User: '+u.username;
         document.getElementById('userModalBtn').textContent = 'Save';
         document.getElementById('userModalBtn').style.display = '';
@@ -549,10 +652,11 @@ function submitUser() {
     const role = document.getElementById('umRole').value;
     const canView = document.getElementById('umProcs').value === '1';
     const serverIds = getSelectedServerIds('umServers');
+    const gpuAccess = getGpuAccessFromEditor(serverIds);
 
     if(editingUserId) {
         api('/api/admin/users/'+editingUserId, {
-            method:'PUT', body:JSON.stringify({role, can_view_processes:canView, server_ids:serverIds})
+            method:'PUT', body:JSON.stringify({role, can_view_processes:canView, server_ids:serverIds, gpu_access:gpuAccess})
         }).then(r => {
             if(r.error) { alert(r.error); return; }
             closeModal('userModal');
@@ -562,7 +666,7 @@ function submitUser() {
         if(!username) { alert('Username is required'); return; }
         if(!email) { alert('Email is required'); return; }
         api('/api/admin/users', {
-            method:'POST', body:JSON.stringify({username, email, role, can_view_processes:canView, server_ids:serverIds})
+            method:'POST', body:JSON.stringify({username, email, role, can_view_processes:canView, server_ids:serverIds, gpu_access:gpuAccess})
         }).then(r => {
             if(r.error) { alert(r.error); return; }
             document.getElementById('userResult').innerHTML = `
@@ -718,6 +822,7 @@ function loadServers() {
                 <td class="actions">
                     <button class="btn btn-sm" onclick="openServerName(${s.id},'${(s.raw_hostname||'').replace(/'/g,"\\'")}','${(s.display_name||'').replace(/'/g,"\\'")}')">Set Name</button>
                     <button class="btn btn-sm" onclick="openServerStatus(${s.id},'${(s.hostname||'').replace(/'/g,"\\'")}','${st}','${(s.admin_status_note||'').replace(/'/g,"\\'")}')">Set Status</button>
+                    <button class="btn btn-sm" onclick="openGpuStatus(${s.id},'${(s.hostname||'').replace(/'/g,"\\'")}')">Manage GPUs</button>
                 </td>
             </tr>`;
         }).join('');
@@ -760,6 +865,60 @@ function submitServerStatus() {
     }).then(r => {
         if(r.error) { alert(r.error); return; }
         closeModal('serverStatusModal');
+        loadServers();
+    });
+}
+
+function openGpuStatus(serverId, hostname) {
+    gpuStatusServerId = serverId;
+    document.getElementById('gsHostname').textContent = hostname;
+    document.getElementById('gsGpuList').innerHTML = '<div class="gpu-hint">Loading...</div>';
+    document.getElementById('gpuStatusModal').classList.add('active');
+    api('/api/admin/servers/' + serverId + '/gpus').then(r => {
+        if (r.error) {
+            document.getElementById('gsGpuList').innerHTML = `<div class="gpu-hint" style="color:var(--red)">${r.error}</div>`;
+            return;
+        }
+        gpuStatusRows = r.gpus || [];
+        if (gpuStatusRows.length === 0) {
+            document.getElementById('gsGpuList').innerHTML = '<div class="gpu-hint">No GPU discovered from latest metrics.</div>';
+            return;
+        }
+        document.getElementById('gsGpuList').innerHTML = gpuStatusRows.map((g, idx) => {
+            const st = g.admin_status || 'normal';
+            const note = g.admin_status_note || '';
+            return `<div class="gpu-row">
+                <div class="gpu-row-top">
+                    <div>
+                        <div class="gpu-row-name">${g.name || 'GPU'} (index ${g.index ?? '-'})</div>
+                        <div class="gpu-row-meta">bus_id: ${g.bus_id}</div>
+                    </div>
+                </div>
+                <div class="gpu-row-controls">
+                    <select id="gpuStatus_${idx}">
+                        <option value="normal" ${st==='normal'?'selected':''}>Normal</option>
+                        <option value="maintenance" ${st==='maintenance'?'selected':''}>Maintenance</option>
+                        <option value="fault" ${st==='fault'?'selected':''}>Fault</option>
+                    </select>
+                    <input id="gpuNote_${idx}" type="text" value="${note.replace(/"/g, '&quot;')}" placeholder="note (optional)">
+                    <button class="btn btn-sm btn-primary" onclick="saveGpuStatus(${idx})">Save</button>
+                </div>
+            </div>`;
+        }).join('');
+    });
+}
+
+function saveGpuStatus(idx) {
+    const g = gpuStatusRows[idx];
+    if (!g) return;
+    const status = document.getElementById('gpuStatus_' + idx).value;
+    const note = document.getElementById('gpuNote_' + idx).value.trim();
+    api('/api/admin/servers/' + gpuStatusServerId + '/gpus/status', {
+        method: 'PUT',
+        body: JSON.stringify({gpu_bus_id: g.bus_id, admin_status: status, admin_status_note: note})
+    }).then(r => {
+        if (r.error) { alert(r.error); return; }
+        openGpuStatus(gpuStatusServerId, document.getElementById('gsHostname').textContent || '');
         loadServers();
     });
 }

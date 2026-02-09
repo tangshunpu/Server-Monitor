@@ -480,6 +480,19 @@
         }
 
         .gpu-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+        .gpu-name-wrap { display:flex; flex-direction:column; gap:4px; min-width:0; }
+        .gpu-admin-badge {
+            display:inline-flex;
+            width: fit-content;
+            padding: 1px 8px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+        .gpu-admin-badge.maintenance { background: rgba(88,166,255,0.12); color: var(--blue); }
+        .gpu-admin-badge.fault { background: rgba(248,81,73,0.15); color: var(--red); }
+        .gpu-admin-note { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+        .gpu-bus-id { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 
         .gpu-index {
             font-size: 11px;
@@ -851,10 +864,19 @@ function renderGpuCard(gpu) {
     const utilValue = Number(util) || 0;
     const utilFillClass = `${getBarColor(utilValue)}${utilValue <= 0 ? ' zero' : ''}`;
     const utilWidth = utilValue <= 0 ? 0.1 : utilValue;
+    const gpuStatus = gpu.admin_status || 'normal';
+    const statusBadge = (gpuStatus === 'maintenance' || gpuStatus === 'fault')
+        ? `<span class="gpu-admin-badge ${gpuStatus}">${gpuStatus.toUpperCase()}</span>`
+        : '';
+    const gpuNote = gpu.admin_status_note ? `<div class="gpu-admin-note">${gpu.admin_status_note}</div>` : '';
+    const busId = gpu.bus_id ? `<div class="gpu-bus-id">Bus: ${gpu.bus_id}</div>` : '';
 
     return `<div class="gpu-card">
         <div class="gpu-header">
-            <span class="gpu-name">${gpu.name || 'GPU'}</span>
+            <div class="gpu-name-wrap">
+                <span class="gpu-name">${gpu.name || 'GPU'}</span>
+                ${statusBadge}
+            </div>
             <div class="gpu-stats">
                 <span class="gpu-stat">
                     <span class="gpu-stat-icon">&#x1F321;</span>
@@ -888,6 +910,8 @@ function renderGpuCard(gpu) {
                 <div class="metric-detail">${memPct}% used</div>
             </div>
         </div>
+        ${busId}
+        ${gpuNote}
         ${renderGpuProcesses(gpu.processes)}
     </div>`;
 }
