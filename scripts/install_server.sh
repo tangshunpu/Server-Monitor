@@ -62,6 +62,7 @@ download_file "$REPO_URL/templates/login.html"     "$INSTALL_DIR/templates/login
 download_file "$REPO_URL/templates/dashboard.html" "$INSTALL_DIR/templates/dashboard.html"
 download_file "$REPO_URL/templates/admin.html"     "$INSTALL_DIR/templates/admin.html"
 download_file "$REPO_URL/templates/register.html"  "$INSTALL_DIR/templates/register.html"
+download_file "$REPO_URL/templates/user.html"      "$INSTALL_DIR/templates/user.html"
 
 # --- Generate config if not exists / 如果配置不存在则生成 ---
 if [ ! -f "$INSTALL_DIR/config.yaml" ]; then
