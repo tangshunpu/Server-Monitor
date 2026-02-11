@@ -20,6 +20,7 @@ import subprocess
 import argparse
 import logging
 import threading
+import re
 
 import psutil
 import requests
@@ -91,23 +92,33 @@ def _get_process_owner(pid):
         with open(cgroup_path, 'r') as f:
             content = f.read()
 
-        # cgroup v2: 0::/incus.payload/container-name/...
-        # cgroup v1: N:xxx:/lxc/container-name/...
-        # Also handles: /incus/container-name, /lxc.payload/container-name
-        for marker in ('incus.payload/', 'lxc.payload/',
-                       'incus/', 'lxc/', '/lxd/'):
-            if marker in content:
-                for line in content.strip().split('\n'):
-                    if marker in line:
-                        parts = line.split('/')
-                        for i, part in enumerate(parts):
-                            if marker.rstrip('/') in part and i + 1 < len(parts):
-                                candidate = parts[i + 1].strip()
-                                if candidate and candidate not in ('init.scope', ''):
-                                    container = candidate
-                                    break
-                    if container:
+        # Common cgroup paths seen in LXC/Incus:
+        # - /incus.payload/<name>/...
+        # - /lxc.payload/<name>/...
+        # - /incus.payload.<name>/...
+        # - /lxc.payload.<name>/...
+        # - /incus/<name>/..., /lxc/<name>/...
+        # - /machine.slice/incus-<name>.scope (systemd style)
+        patterns = (
+            r'/(?:incus|lxc)\.payload/([^/\n]+)',
+            r'/(?:incus|lxc)\.payload\.([^/\n]+)',
+            r'/(?:incus|lxc)/([^/\n]+)',
+            r'/incus-([^/\n.]+)\.scope',
+            r'/lxc-([^/\n.]+)\.scope',
+        )
+
+        for line in content.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            for pattern in patterns:
+                m = re.search(pattern, line)
+                if m:
+                    candidate = m.group(1).strip()
+                    if candidate and candidate not in ('init.scope',):
+                        container = candidate
                         break
+            if container:
                 break
     except (FileNotFoundError, PermissionError):
         pass
