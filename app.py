@@ -1008,16 +1008,16 @@ def api_server_container_history(server_id):
         except json.JSONDecodeError:
             gpu_data = []
         snap = _snapshot_container_gpu_usage(gpu_data)
-        g = snap.get(container_name, {})
-        if g:
+        gpu_usage = snap.get(container_name, {})
+        if gpu_usage:
             try:
-                gpu_count = int(g.get('gpu_count') or 0)
+                gpu_count = int(gpu_usage.get('gpu_count') or 0)
             except (TypeError, ValueError):
                 gpu_count = 0
-            util_sum = _safe_float(g.get('gpu_util_sum'))
+            util_sum = _safe_float(gpu_usage.get('gpu_util_sum'))
             if util_sum is not None and gpu_count > 0:
                 gpu_util_percent = util_sum / gpu_count
-            gpu_memory_mib = _safe_float(g.get('memory_mib')) or 0.0
+            gpu_memory_mib = _safe_float(gpu_usage.get('memory_mib')) or 0.0
 
         cpu_percent = None
         cpu_usage_ns = _safe_float(target.get('cpu_usage_ns'))
