@@ -862,6 +862,34 @@
             align-items: center;
             gap: 8px;
         }
+        .ct-main {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 0;
+            flex: 1;
+        }
+        .ct-top {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+        .ct-gpu-stats {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .ct-gpu-pill {
+            font-size: 10px;
+            color: var(--text-secondary);
+            border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(255,255,255,0.04);
+            border-radius: 999px;
+            padding: 2px 8px;
+            font-variant-numeric: tabular-nums;
+        }
+        [data-theme="light"] .ct-gpu-pill { border-color: rgba(80,95,125,0.2); }
 
         .ct-ip {
             font-size: 11px;
@@ -877,6 +905,8 @@
             font-weight: 600;
             border: 1px solid rgba(255,149,0,0.35);
         }
+
+        .container-gpu-empty { font-size: 11px; color: var(--text-muted); }
 
         /* ===== Card Footer ===== */
         .card-footer {
@@ -1151,10 +1181,11 @@ function renderOverview(data) {
 function renderGpuProcesses(processes) {
     if (!currentUser.can_view_processes) return '';
     if (!processes || processes.length === 0) return '';
+    const canSeeContainers = currentUser.role === 'admin' || !!currentUser.can_view_containers;
     const rows = processes.map(p => {
         const name = p.process_name ? p.process_name.split('/').pop() : 'unknown';
         let badges = '';
-        if (p.container) {
+        if (canSeeContainers && p.container) {
             badges += `<span class="process-container" title="Container: ${p.container}">${p.container}</span>`;
         }
         if (p.username && p.username !== 'unknown') {
@@ -1264,30 +1295,52 @@ function selectPrimaryIPv4(ipv4List) {
     return preferred || '';
 }
 
-function renderContainerSection(containers, engine) {
-    if (!containers || containers.length === 0) return '';
+function renderContainerSection(containers, engine, gpuStats, gpuWindowHours) {
+    const list = Array.isArray(containers) ? containers : [];
+    if (list.length === 0 && (!Array.isArray(gpuStats) || gpuStats.length === 0)) return '';
+    const statsMap = {};
+    (gpuStats || []).forEach(item => {
+        const name = (item && item.container) ? String(item.container) : '';
+        if (name) statsMap[name] = item;
+    });
     const engineBadge = engine ? `<span class="container-engine-badge">${engine}</span>` : '';
-    const items = containers.map(ct => {
+    const items = list.map(ct => {
         const st = (ct.status || '').toLowerCase();
         const dotClass = st === 'running' ? 'running' : (st === 'frozen' ? 'frozen' : 'stopped');
         const primaryIp = selectPrimaryIPv4(ct.ipv4);
+        const s = statsMap[ct.name || ''];
+        const gpuHours = s ? `${Number(s.gpu_hours || 0).toFixed(2)} GPU·h` : `0.00 GPU·h`;
+        const currentGpuCount = s ? Number(s.current_gpu_count || 0) : 0;
+        const avgUtil = s ? `${fmt(s.average_utilization, '%')}` : '0%';
+        const avgMem = s ? `${fmt(s.average_memory_mib, ' MiB')}` : '0 MiB';
         return `<div class="container-item">
             <span class="ct-status-dot ${dotClass}"></span>
-            <span class="ct-name" title="${ct.name || ''}">${ct.name || 'unknown'}</span>
-            <div class="ct-meta">
-                ${primaryIp ? `<span class="ct-ip">${primaryIp}</span>` : '<span class="ct-ip-warning">&#x26A0; No IP</span>'}
-                <span>${ct.status || 'Unknown'}</span>
+            <div class="ct-main">
+                <div class="ct-top">
+                    <span class="ct-name" title="${ct.name || ''}">${ct.name || 'unknown'}</span>
+                    <div class="ct-meta">
+                        ${primaryIp ? `<span class="ct-ip">${primaryIp}</span>` : '<span class="ct-ip-warning">&#x26A0; No IP</span>'}
+                        <span>${ct.status || 'Unknown'}</span>
+                    </div>
+                </div>
+                <div class="ct-gpu-stats">
+                    <span class="ct-gpu-pill" title="Historical GPU time in ${gpuWindowHours || 24}h window">${gpuHours}</span>
+                    <span class="ct-gpu-pill" title="Current occupied GPU count">Now GPU: ${currentGpuCount}</span>
+                    <span class="ct-gpu-pill" title="Average GPU utilization in window">Avg Util: ${avgUtil}</span>
+                    <span class="ct-gpu-pill" title="Average total VRAM usage in window">Avg VRAM: ${avgMem}</span>
+                </div>
             </div>
         </div>`;
     }).join('');
-    const running = containers.filter(c => (c.status || '').toLowerCase() === 'running').length;
+    const running = list.filter(c => (c.status || '').toLowerCase() === 'running').length;
+    const listHTML = items || `<div class="container-gpu-empty">No containers detected.</div>`;
     return `<div class="container-section">
         <div class="container-section-title">
             &#x1F4E6; Containers
-            <span class="container-count">${running}/${containers.length} running</span>
+            <span class="container-count">${running}/${list.length} running</span>
             ${engineBadge}
         </div>
-        <div class="container-list">${items}</div>
+        <div class="container-list">${listHTML}</div>
     </div>`;
 }
 
@@ -1321,7 +1374,12 @@ function renderServerCard(server) {
                </div>`
             : `<div class="gpu-section"><div class="no-gpu">No GPU detected</div></div>`;
 
-        const containerSection = renderContainerSection(m.containers, m.container_engine);
+        const containerSection = renderContainerSection(
+            m.containers,
+            m.container_engine,
+            m.container_gpu_stats,
+            m.container_gpu_window_hours
+        );
 
         metricsHTML = `
         <div class="card-body">

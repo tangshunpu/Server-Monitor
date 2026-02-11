@@ -139,7 +139,7 @@
         </div>
         <div class="table-wrap">
             <table><thead><tr>
-                <th>Username</th><th>Role</th><th>View Processes</th><th>Server Access</th><th>Created</th><th>Actions</th>
+                <th>Username</th><th>Role</th><th>View Processes</th><th>View Containers</th><th>Server Access</th><th>Created</th><th>Actions</th>
             </tr></thead><tbody id="usersBody"></tbody></table>
         </div>
     </div>
@@ -152,7 +152,7 @@
         </div>
         <div class="table-wrap">
             <table><thead><tr>
-                <th>Invite Link</th><th>Role</th><th>Procs</th><th>Servers</th><th>Uses</th><th>Expires</th><th>Status</th><th>Actions</th>
+                <th>Invite Link</th><th>Role</th><th>Procs</th><th>Containers</th><th>Servers</th><th>Uses</th><th>Expires</th><th>Status</th><th>Actions</th>
             </tr></thead><tbody id="invitesBody"></tbody></table>
         </div>
     </div>
@@ -303,6 +303,10 @@
                 <label>View Processes</label>
                 <select id="umProcs"><option value="0">No</option><option value="1">Yes</option></select>
             </div>
+            <div class="form-group">
+                <label>View Containers</label>
+                <select id="umContainers"><option value="0">No</option><option value="1">Yes</option></select>
+            </div>
         </div>
         <div class="form-group">
             <label>Server Access</label>
@@ -330,6 +334,10 @@
             <div class="form-group">
                 <label>View Processes</label>
                 <select id="imProcs"><option value="0">No</option><option value="1">Yes</option></select>
+            </div>
+            <div class="form-group">
+                <label>View Containers</label>
+                <select id="imContainers"><option value="0">No</option><option value="1">Yes</option></select>
             </div>
         </div>
         <div class="form-group">
@@ -457,10 +465,11 @@ function loadUsers() {
     api('/api/admin/users').then(users => {
         document.getElementById('userCountLabel').textContent = users.length + ' user(s)';
         const tb = document.getElementById('usersBody');
-        if(users.length===0) { tb.innerHTML='<tr><td colspan="6" class="empty-row">No users</td></tr>'; return; }
+        if(users.length===0) { tb.innerHTML='<tr><td colspan="7" class="empty-row">No users</td></tr>'; return; }
         tb.innerHTML = users.map(u => {
             const roleBadge = u.role==='admin' ? '<span class="badge badge-admin">Admin</span>' : '<span class="badge badge-user">User</span>';
             const procsBadge = u.can_view_processes ? '<span class="badge badge-yes">Yes</span>' : '<span class="badge badge-no">No</span>';
+            const containersBadge = u.can_view_containers ? '<span class="badge badge-yes">Yes</span>' : '<span class="badge badge-no">No</span>';
             let serverHTML = '';
             if(u.role==='admin') {
                 serverHTML = '<span class="badge badge-admin">All</span>';
@@ -479,6 +488,7 @@ function loadUsers() {
                 <td>${userLabel}</td>
                 <td>${roleBadge}</td>
                 <td>${procsBadge}</td>
+                <td>${containersBadge}</td>
                 <td>${serverHTML}</td>
                 <td style="font-size:12px;color:var(--text-muted)">${fmtTime(u.created_at)}</td>
                 <td class="actions">
@@ -495,11 +505,12 @@ function loadInvites() {
     api('/api/admin/invites').then(invites => {
         document.getElementById('inviteCountLabel').textContent = invites.length + ' invite(s)';
         const tb = document.getElementById('invitesBody');
-        if(invites.length===0) { tb.innerHTML='<tr><td colspan="8" class="empty-row">No invites</td></tr>'; return; }
+        if(invites.length===0) { tb.innerHTML='<tr><td colspan="9" class="empty-row">No invites</td></tr>'; return; }
         tb.innerHTML = invites.map(inv => {
             const url = location.origin+'/register?token='+inv.token;
             const roleBadge = inv.role==='admin'?'<span class="badge badge-admin">Admin</span>':'<span class="badge badge-user">User</span>';
             const procsBadge = inv.can_view_processes?'Yes':'No';
+            const containersBadge = inv.can_view_containers?'Yes':'No';
             const srvNames = (inv.server_ids||[]).map(sid=>{const s=allServers.find(x=>x.id===sid);return s?s.hostname:'#'+sid;}).join(', ')||'None';
             const uses = `${inv.used_count || 0}/${inv.max_uses || 1}`;
             let statusBadge;
@@ -510,6 +521,7 @@ function loadInvites() {
                 <td><span class="invite-url" onclick="copyText('${url}')" title="Click to copy">${url}</span></td>
                 <td>${roleBadge}</td>
                 <td>${procsBadge}</td>
+                <td>${containersBadge}</td>
                 <td style="font-size:12px">${srvNames}</td>
                 <td style="font-size:12px">${uses}</td>
                 <td style="font-size:12px;color:var(--text-muted)">${fmtTime(inv.expires_at)}</td>
@@ -622,6 +634,7 @@ function openCreateUser() {
     document.getElementById('umEmail').disabled = false;
     document.getElementById('umRole').value = 'user';
     document.getElementById('umProcs').value = '0';
+    document.getElementById('umContainers').value = '0';
     document.getElementById('userResult').innerHTML = '';
     renderServerChips('umServers', []);
     document.getElementById('userModal').classList.add('active');
@@ -642,6 +655,7 @@ function openEditUser(uid) {
         document.getElementById('umEmail').disabled = true;
         document.getElementById('umRole').value = u.role;
         document.getElementById('umProcs').value = u.can_view_processes?'1':'0';
+        document.getElementById('umContainers').value = u.can_view_containers?'1':'0';
         document.getElementById('userResult').innerHTML = '';
         renderServerChips('umServers', u.server_ids);
         document.getElementById('userModal').classList.add('active');
@@ -653,12 +667,13 @@ function submitUser() {
     const email = document.getElementById('umEmail').value.trim();
     const role = document.getElementById('umRole').value;
     const canView = document.getElementById('umProcs').value === '1';
+    const canViewContainers = document.getElementById('umContainers').value === '1';
     const serverIds = getSelectedServerIds('umServers');
     const gpuAccess = getGpuAccessFromEditor(serverIds);
 
     if(editingUserId) {
         api('/api/admin/users/'+editingUserId, {
-            method:'PUT', body:JSON.stringify({role, can_view_processes:canView, server_ids:serverIds, gpu_access:gpuAccess})
+            method:'PUT', body:JSON.stringify({role, can_view_processes:canView, can_view_containers:canViewContainers, server_ids:serverIds, gpu_access:gpuAccess})
         }).then(r => {
             if(r.error) { alert(r.error); return; }
             closeModal('userModal');
@@ -668,7 +683,7 @@ function submitUser() {
         if(!username) { alert('Username is required'); return; }
         if(!email) { alert('Email is required'); return; }
         api('/api/admin/users', {
-            method:'POST', body:JSON.stringify({username, email, role, can_view_processes:canView, server_ids:serverIds, gpu_access:gpuAccess})
+            method:'POST', body:JSON.stringify({username, email, role, can_view_processes:canView, can_view_containers:canViewContainers, server_ids:serverIds, gpu_access:gpuAccess})
         }).then(r => {
             if(r.error) { alert(r.error); return; }
             document.getElementById('userResult').innerHTML = `
@@ -728,6 +743,7 @@ function confirmReset() {
 function openCreateInvite() {
     document.getElementById('imRole').value = 'user';
     document.getElementById('imProcs').value = '0';
+    document.getElementById('imContainers').value = '0';
     document.getElementById('imExpiry').value = '72';
     document.getElementById('imMaxUses').value = '1';
     document.getElementById('inviteResult').innerHTML = '';
@@ -739,12 +755,13 @@ function openCreateInvite() {
 function submitInvite() {
     const role = document.getElementById('imRole').value;
     const canView = document.getElementById('imProcs').value === '1';
+    const canViewContainers = document.getElementById('imContainers').value === '1';
     const expiry = parseInt(document.getElementById('imExpiry').value) || 72;
     const maxUses = parseInt(document.getElementById('imMaxUses').value) || 1;
     const serverIds = getSelectedServerIds('imServers');
 
     api('/api/admin/invites', {
-        method:'POST', body:JSON.stringify({role, can_view_processes:canView, expire_hours:expiry, max_uses:maxUses, server_ids:serverIds})
+        method:'POST', body:JSON.stringify({role, can_view_processes:canView, can_view_containers:canViewContainers, expire_hours:expiry, max_uses:maxUses, server_ids:serverIds})
     }).then(r => {
         if(r.error) { alert(r.error); return; }
         document.getElementById('inviteResult').innerHTML = `

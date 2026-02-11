@@ -49,6 +49,8 @@ app.secret_key = CONFIG['server']['secret_key']
 app.permanent_session_lifetime = timedelta(hours=24)
 
 DATABASE = os.path.join(BASE_DIR, 'monitor.db')
+CONTAINER_GPU_LOOKBACK_HOURS = 24
+CONTAINER_GPU_MAX_ROWS = 2000
 
 # ---------------------------------------------------------------------------
 # Database helpers / 数据库辅助
@@ -120,6 +122,7 @@ def init_db():
         password_hash       TEXT NOT NULL,
         role                TEXT NOT NULL DEFAULT 'user',
         can_view_processes  INTEGER DEFAULT 0,
+        can_view_containers INTEGER DEFAULT 0,
         created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_by          INTEGER
     )''')
@@ -151,6 +154,7 @@ def init_db():
         token               TEXT NOT NULL UNIQUE,
         role                TEXT NOT NULL DEFAULT 'user',
         can_view_processes  INTEGER DEFAULT 0,
+        can_view_containers INTEGER DEFAULT 0,
         server_ids          TEXT,
         max_uses            INTEGER NOT NULL DEFAULT 1,
         used_count          INTEGER NOT NULL DEFAULT 0,
@@ -224,12 +228,16 @@ def init_db():
     ucols = [r[1] for r in db.execute('PRAGMA table_info(users)').fetchall()]
     if 'email' not in ucols:
         db.execute("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''")
+    if 'can_view_containers' not in ucols:
+        db.execute("ALTER TABLE users ADD COLUMN can_view_containers INTEGER DEFAULT 0")
     db.execute('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)')
     icols = [r[1] for r in db.execute('PRAGMA table_info(invites)').fetchall()]
     if 'max_uses' not in icols:
         db.execute('ALTER TABLE invites ADD COLUMN max_uses INTEGER NOT NULL DEFAULT 1')
     if 'used_count' not in icols:
         db.execute('ALTER TABLE invites ADD COLUMN used_count INTEGER NOT NULL DEFAULT 0')
+    if 'can_view_containers' not in icols:
+        db.execute("ALTER TABLE invites ADD COLUMN can_view_containers INTEGER DEFAULT 0")
     db.execute('CREATE INDEX IF NOT EXISTS idx_user_gpu_access_user_server '
                'ON user_gpu_access(user_id, server_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_gpu_admin_status_server '
@@ -257,9 +265,9 @@ def init_db():
         admin_pass = auth_cfg.get('password', 'admin123')
         pw_hash = generate_password_hash(admin_pass)
         db.execute(
-            'INSERT INTO users (username, password_hash, role, can_view_processes) '
-            'VALUES (?, ?, ?, ?)',
-            (admin_user, pw_hash, 'admin', 1)
+            'INSERT INTO users (username, password_hash, role, can_view_processes, can_view_containers) '
+            'VALUES (?, ?, ?, ?, ?)',
+            (admin_user, pw_hash, 'admin', 1, 1)
         )
         print(f"[INIT] Admin user '{admin_user}' created from config.yaml bootstrap / "
               f"管理员用户 '{admin_user}' 已从 config.yaml 引导创建")
@@ -449,6 +457,175 @@ def _normalize_mac_address(mac):
     return ':'.join(cleaned[i:i + 2] for i in range(0, 12, 2)).lower()
 
 
+def _safe_float(value):
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _median(values):
+    if not values:
+        return None
+    seq = sorted(values)
+    mid = len(seq) // 2
+    if len(seq) % 2 == 1:
+        return seq[mid]
+    return (seq[mid - 1] + seq[mid]) / 2.0
+
+
+def _snapshot_container_gpu_usage(gpu_data):
+    """Aggregate one sample's GPU usage by container.
+    将单次采样的 GPU 数据按容器聚合。"""
+    per_container = {}
+    for gpu in gpu_data or []:
+        processes = gpu.get('processes') or []
+        if not processes:
+            continue
+
+        per_gpu_mem = {}
+        for proc in processes:
+            container_name = (proc.get('container') or '').strip()
+            if not container_name:
+                continue
+            mem_mib = _safe_float(proc.get('memory_used'))
+            if mem_mib is None or mem_mib < 0:
+                mem_mib = 0.0
+            per_gpu_mem[container_name] = per_gpu_mem.get(container_name, 0.0) + mem_mib
+            info = per_container.setdefault(container_name, {
+                'memory_mib': 0.0,
+                'gpu_util_sum': 0.0,
+                'gpu_count': 0,
+            })
+            info['memory_mib'] += mem_mib
+
+        if not per_gpu_mem:
+            continue
+
+        gpu_util = _safe_float(gpu.get('gpu_utilization'))
+        for container_name in per_gpu_mem:
+            per_container[container_name]['gpu_count'] += 1
+            if gpu_util is not None:
+                per_container[container_name]['gpu_util_sum'] += gpu_util
+
+    return per_container
+
+
+def _compute_container_gpu_stats(db, server_id):
+    """Compute per-container GPU usage over a rolling window.
+    计算滚动窗口内每个容器的 GPU 使用统计。"""
+    cutoff = (datetime.now() - timedelta(hours=CONTAINER_GPU_LOOKBACK_HOURS)).isoformat()
+    rows = db.execute(
+        '''SELECT timestamp, gpu_data
+           FROM (
+               SELECT timestamp, gpu_data
+               FROM metrics
+               WHERE server_id = ? AND timestamp >= ?
+               ORDER BY timestamp DESC
+               LIMIT ?
+           ) t
+           ORDER BY timestamp ASC''',
+        (server_id, cutoff, CONTAINER_GPU_MAX_ROWS)
+    ).fetchall()
+
+    samples = []
+    for row in rows:
+        ts_raw = row['timestamp']
+        raw_gpu = row['gpu_data']
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except (TypeError, ValueError):
+            continue
+        try:
+            gpu_data = json.loads(raw_gpu) if raw_gpu else []
+        except json.JSONDecodeError:
+            gpu_data = []
+        samples.append({
+            'ts': ts,
+            'snapshot': _snapshot_container_gpu_usage(gpu_data),
+        })
+
+    if not samples:
+        return {
+            'window_hours': CONTAINER_GPU_LOOKBACK_HOURS,
+            'containers': [],
+        }
+
+    deltas = []
+    for idx in range(len(samples) - 1):
+        dt = (samples[idx + 1]['ts'] - samples[idx]['ts']).total_seconds()
+        if dt > 0:
+            deltas.append(dt)
+    default_step = _median(deltas) or 30.0
+    default_step = max(1.0, min(default_step, 3600.0))
+    max_step = max(default_step * 2.0, 60.0)
+
+    stats = {}
+    for idx, sample in enumerate(samples):
+        snapshot = sample['snapshot']
+        if not snapshot:
+            continue
+
+        if idx < len(samples) - 1:
+            dt = (samples[idx + 1]['ts'] - sample['ts']).total_seconds()
+        else:
+            dt = default_step
+        if dt <= 0:
+            dt = default_step
+        dt = min(dt, max_step)
+
+        for container_name, usage in snapshot.items():
+            mem_mib = usage.get('memory_mib', 0.0)
+            gpu_count = usage.get('gpu_count', 0)
+            util_sum = usage.get('gpu_util_sum', 0.0)
+            sample_avg_util = (util_sum / gpu_count) if gpu_count > 0 else 0.0
+            entry = stats.setdefault(container_name, {
+                'gpu_seconds': 0.0,
+                'util_weighted_sum': 0.0,
+                'util_weight': 0.0,
+                'memory_integral': 0.0,
+                'peak_memory_mib': 0.0,
+                'peak_gpu_count': 0,
+            })
+            entry['gpu_seconds'] += max(gpu_count, 0) * dt
+            entry['util_weighted_sum'] += sample_avg_util * dt
+            entry['util_weight'] += dt
+            entry['memory_integral'] += mem_mib * dt
+            if mem_mib > entry['peak_memory_mib']:
+                entry['peak_memory_mib'] = mem_mib
+            if gpu_count > entry['peak_gpu_count']:
+                entry['peak_gpu_count'] = gpu_count
+
+    latest_snapshot = samples[-1]['snapshot']
+    output = []
+    for container_name, entry in stats.items():
+        gpu_seconds = entry['gpu_seconds']
+        if gpu_seconds <= 0:
+            continue
+        util_weight = entry['util_weight']
+        avg_util = (entry['util_weighted_sum'] / util_weight) if util_weight > 0 else 0.0
+        avg_mem = (entry['memory_integral'] / util_weight) if util_weight > 0 else 0.0
+        current = latest_snapshot.get(container_name, {})
+        output.append({
+            'container': container_name,
+            'gpu_hours': round(gpu_seconds / 3600.0, 2),
+            'current_gpu_count': int(current.get('gpu_count', 0)),
+            'current_memory_mib': round(current.get('memory_mib', 0.0), 1),
+            'average_memory_mib': round(avg_mem, 1),
+            'peak_memory_mib': round(entry['peak_memory_mib'], 1),
+            'peak_gpu_count': int(entry['peak_gpu_count']),
+            'average_utilization': round(avg_util, 1),
+        })
+
+    output.sort(key=lambda x: (-x['gpu_hours'], -x['current_gpu_count'], x['container']))
+    return {
+        'window_hours': CONTAINER_GPU_LOOKBACK_HOURS,
+        'containers': output,
+    }
+
+
 def _load_session_user():
     """Load current user info into g.user from session / 从 session 加载当前用户"""
     g.user = None
@@ -459,6 +636,7 @@ def _load_session_user():
             'username':           session.get('username'),
             'role':               session.get('role'),
             'can_view_processes': session.get('can_view_processes', 0),
+            'can_view_containers': session.get('can_view_containers', 0),
         }
 
 
@@ -519,6 +697,7 @@ def login():
             session['username'] = user['username']
             session['role'] = user['role']
             session['can_view_processes'] = user['can_view_processes']
+            session['can_view_containers'] = user['can_view_containers']
             login_attempts.pop(ip, None)
             return redirect(url_for('dashboard'))
         else:
@@ -630,9 +809,9 @@ def register():
         # Create user with invite permissions
         pw_hash = generate_password_hash(password)
         cursor = db.execute(
-            'INSERT INTO users (username, email, password_hash, role, can_view_processes, created_by) '
-            'VALUES (?, ?, ?, ?, ?, ?)',
-            (username, email, pw_hash, invite['role'], invite['can_view_processes'],
+            'INSERT INTO users (username, email, password_hash, role, can_view_processes, can_view_containers, created_by) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (username, email, pw_hash, invite['role'], invite['can_view_processes'], invite['can_view_containers'],
              invite['created_by'])
         )
         new_user_id = cursor.lastrowid
@@ -700,6 +879,7 @@ def api_server_history(server_id):
     ).fetchall()
     gpu_status_map = _load_gpu_admin_status_map(db, [server_id])
     allowed_gpu_bus_ids = None
+    can_view_containers = bool(g.user.get('can_view_containers')) or g.user['role'] == 'admin'
     if g.user['role'] != 'admin':
         user_gpu_map = _load_user_gpu_access_map(db, g.user['id'])
         if server_id in user_gpu_map:
@@ -728,6 +908,10 @@ def api_server_history(server_id):
         if not g.user.get('can_view_processes'):
             for gpu in gpu_data:
                 gpu.pop('processes', None)
+        elif not can_view_containers:
+            for gpu in gpu_data:
+                for proc in (gpu.get('processes') or []):
+                    proc.pop('container', None)
         result.append({
             'timestamp':      m['timestamp'],
             'cpu_percent':    m['cpu_percent'],
@@ -972,7 +1156,7 @@ def api_admin_set_registration_settings():
 def api_admin_list_users():
     db = get_db()
     users = db.execute(
-        'SELECT id, username, email, role, can_view_processes, created_at FROM users ORDER BY id'
+        'SELECT id, username, email, role, can_view_processes, can_view_containers, created_at FROM users ORDER BY id'
     ).fetchall()
 
     result = []
@@ -997,6 +1181,7 @@ def api_admin_list_users():
             'email':              u['email'] or '',
             'role':               u['role'],
             'can_view_processes': u['can_view_processes'],
+            'can_view_containers': u['can_view_containers'],
             'server_ids':         server_ids,
             'gpu_access':         gpu_access,
             'created_at':         u['created_at'],
@@ -1015,6 +1200,7 @@ def api_admin_create_user():
     email = _normalize_email(data.get('email', ''))
     role = data.get('role', 'user')
     can_view = 1 if data.get('can_view_processes') else 0
+    can_view_containers = 1 if data.get('can_view_containers') else 0
     server_ids = data.get('server_ids', [])
     gpu_access = data.get('gpu_access', {}) or {}
     if not email:
@@ -1037,9 +1223,9 @@ def api_admin_create_user():
     pw_hash = generate_password_hash(password)
 
     cursor = db.execute(
-        'INSERT INTO users (username, email, password_hash, role, can_view_processes, created_by) '
-        'VALUES (?, ?, ?, ?, ?, ?)',
-        (username, email, pw_hash, role, can_view, g.user['id'])
+        'INSERT INTO users (username, email, password_hash, role, can_view_processes, can_view_containers, created_by) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        (username, email, pw_hash, role, can_view, can_view_containers, g.user['id'])
     )
     new_id = cursor.lastrowid
 
@@ -1101,11 +1287,12 @@ def api_admin_update_user(user_id):
             return jsonify({'error': 'Cannot remove the last admin / 不能移除最后一个管理员'}), 400
 
     role = data.get('role', user['role'])
-    can_view = 1 if data.get('can_view_processes') else 0
+    can_view = 1 if data.get('can_view_processes', user['can_view_processes']) else 0
+    can_view_containers = 1 if data.get('can_view_containers', user['can_view_containers']) else 0
 
     db.execute(
-        'UPDATE users SET role=?, can_view_processes=? WHERE id=?',
-        (role, can_view, user_id)
+        'UPDATE users SET role=?, can_view_processes=?, can_view_containers=? WHERE id=?',
+        (role, can_view, can_view_containers, user_id)
     )
 
     # Update server access
@@ -1218,6 +1405,7 @@ def api_admin_list_invites():
             'token':              inv['token'],
             'role':               inv['role'],
             'can_view_processes': inv['can_view_processes'],
+            'can_view_containers': inv['can_view_containers'],
             'server_ids':         json.loads(inv['server_ids']) if inv['server_ids'] else [],
             'created_at':         inv['created_at'],
             'expires_at':         inv['expires_at'],
@@ -1235,6 +1423,7 @@ def api_admin_create_invite():
     data = request.get_json() or {}
     role = data.get('role', 'user')
     can_view = 1 if data.get('can_view_processes') else 0
+    can_view_containers = 1 if data.get('can_view_containers') else 0
     server_ids = data.get('server_ids', [])
     expire_hours = data.get('expire_hours', 72)
     try:
@@ -1250,9 +1439,9 @@ def api_admin_create_invite():
     db = get_db()
     db.execute(
         '''INSERT INTO invites
-           (token, role, can_view_processes, server_ids, max_uses, used_count, created_by, expires_at)
-           VALUES (?, ?, ?, ?, ?, 0, ?, ?)''',
-        (token, role, can_view, json.dumps(server_ids), max_uses, g.user['id'], expires_at)
+           (token, role, can_view_processes, can_view_containers, server_ids, max_uses, used_count, created_by, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)''',
+        (token, role, can_view, can_view_containers, json.dumps(server_ids), max_uses, g.user['id'], expires_at)
     )
     db.commit()
 
@@ -1633,6 +1822,7 @@ def _build_server_data(user):
         ).fetchall()
 
     can_view_procs = bool(user.get('can_view_processes'))
+    can_view_containers = bool(user.get('can_view_containers')) or user.get('role') == 'admin'
     server_ids = [s['id'] for s in servers]
     gpu_status_map = _load_gpu_admin_status_map(db, server_ids)
     user_gpu_map = {}
@@ -1731,17 +1921,27 @@ def _build_server_data(user):
             if not can_view_procs:
                 for gpu in gpu_data:
                     gpu.pop('processes', None)
+            elif not can_view_containers:
+                for gpu in gpu_data:
+                    for proc in (gpu.get('processes') or []):
+                        proc.pop('container', None)
 
             # Containers / 容器列表
-            try:
-                containers_data = json.loads(latest['containers']) if latest['containers'] else []
-            except (json.JSONDecodeError, KeyError):
+            if can_view_containers:
+                try:
+                    containers_data = json.loads(latest['containers']) if latest['containers'] else []
+                except (json.JSONDecodeError, KeyError):
+                    containers_data = []
+                container_engine = None
+                try:
+                    container_engine = latest['container_engine']
+                except (KeyError, IndexError):
+                    pass
+                container_gpu_stats = _compute_container_gpu_stats(db, s['id'])
+            else:
                 containers_data = []
-            container_engine = None
-            try:
-                container_engine = latest['container_engine']
-            except (KeyError, IndexError):
-                pass
+                container_engine = None
+                container_gpu_stats = {'containers': [], 'window_hours': CONTAINER_GPU_LOOKBACK_HOURS}
 
             info['metrics'] = {
                 'cpu_percent':    latest['cpu_percent'],
@@ -1755,6 +1955,8 @@ def _build_server_data(user):
                 'gpu_data':       gpu_data,
                 'containers':     containers_data,
                 'container_engine': container_engine,
+                'container_gpu_stats': container_gpu_stats['containers'],
+                'container_gpu_window_hours': container_gpu_stats['window_hours'],
                 'network_sent':   latest['network_sent'],
                 'network_recv':   latest['network_recv'],
                 'network_cn_ok':  latest['network_cn_ok'],
