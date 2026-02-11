@@ -794,6 +794,90 @@
             font-size: 13px;
         }
 
+        /* ===== Containers Section ===== */
+        .container-section { border-top: 1px solid var(--border); padding-top: 18px; margin-top: 18px; }
+
+        .container-section-title {
+            font-size: 13px; font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+            display: flex; align-items: center; gap: 8px;
+        }
+
+        .container-count {
+            background: rgba(10,132,255,0.15);
+            color: var(--blue);
+            padding: 1px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+        }
+
+        .container-engine-badge {
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-weight: 600;
+            background: rgba(130,80,223,0.12);
+            color: var(--purple);
+        }
+
+        .container-list { display: flex; flex-direction: column; gap: 8px; }
+
+        .container-item {
+            background: var(--bg-inner);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 10px;
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        [data-theme="light"] .container-item { border-color: rgba(80,95,125,0.16); }
+
+        .ct-status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .ct-status-dot.running { background: var(--green); box-shadow: 0 0 4px rgba(48,209,88,0.3); }
+        .ct-status-dot.stopped { background: var(--text-muted); }
+        .ct-status-dot.frozen  { background: var(--blue); }
+
+        .ct-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .ct-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-left: auto;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .ct-type-badge {
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 4px;
+            background: rgba(88,166,255,0.12);
+            color: var(--blue);
+            font-weight: 500;
+        }
+
+        .ct-ip {
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-family: 'SF Mono', SFMono-Regular, Consolas, monospace;
+        }
+
         /* ===== Card Footer ===== */
         .card-footer {
             padding: 10px 20px;
@@ -1032,12 +1116,17 @@ function renderOverview(data) {
             ${renderNetPill('🇨🇳 国内', cnOk)}
             ${renderNetPill('🌍 国际', globalOk)}
         </div>`;
+        const ctList = m ? (m.containers || []) : [];
+        const ctRunning = ctList.filter(c => (c.status || '').toLowerCase() === 'running').length;
+        const ctSummary = ctList.length > 0
+            ? `<span style="font-size:11px;color:var(--text-muted);margin-left:4px">&#x1F4E6; ${ctRunning}/${ctList.length}</span>`
+            : '';
 
         return `<div class="overview-card status-${st}" onclick="focusDetailServer(${s.id})">
             <span class="ov-dot ${st}"></span>
             <div class="ov-info">
                 <div class="ov-hostname">${s.hostname} ${statusLabel}</div>
-                <div class="ov-gpu-summary">${gpu.label}${vendorBadge}</div>
+                <div class="ov-gpu-summary">${gpu.label}${vendorBadge}${ctSummary}</div>
                 ${noteHTML}
                 <div class="ov-stats">
                     <span>CPU <span class="ov-stat-val">${m ? fmt(m.cpu_percent, '%') : '-'}</span></span>
@@ -1153,6 +1242,38 @@ function renderGpuCard(gpu) {
 }
 
 // ---------------------------------------------------------------------------
+// Containers
+// ---------------------------------------------------------------------------
+function renderContainerSection(containers, engine) {
+    if (!containers || containers.length === 0) return '';
+    const engineBadge = engine ? `<span class="container-engine-badge">${engine}</span>` : '';
+    const items = containers.map(ct => {
+        const st = (ct.status || '').toLowerCase();
+        const dotClass = st === 'running' ? 'running' : (st === 'frozen' ? 'frozen' : 'stopped');
+        const ipList = (ct.ipv4 && ct.ipv4.length > 0) ? ct.ipv4.join(', ') : '';
+        const typeBadge = ct.type ? `<span class="ct-type-badge">${ct.type}</span>` : '';
+        return `<div class="container-item">
+            <span class="ct-status-dot ${dotClass}"></span>
+            <span class="ct-name" title="${ct.name || ''}">${ct.name || 'unknown'}</span>
+            <div class="ct-meta">
+                ${typeBadge}
+                ${ipList ? `<span class="ct-ip">${ipList}</span>` : ''}
+                <span>${ct.status || 'Unknown'}</span>
+            </div>
+        </div>`;
+    }).join('');
+    const running = containers.filter(c => (c.status || '').toLowerCase() === 'running').length;
+    return `<div class="container-section">
+        <div class="container-section-title">
+            &#x1F4E6; Containers
+            <span class="container-count">${running}/${containers.length} running</span>
+            ${engineBadge}
+        </div>
+        <div class="container-list">${items}</div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
 // Server Card
 // ---------------------------------------------------------------------------
 function renderServerCard(server) {
@@ -1181,6 +1302,8 @@ function renderServerCard(server) {
                 ${m.gpu_data.map(renderGpuCard).join('')}
                </div>`
             : `<div class="gpu-section"><div class="no-gpu">No GPU detected</div></div>`;
+
+        const containerSection = renderContainerSection(m.containers, m.container_engine);
 
         metricsHTML = `
         <div class="card-body">
@@ -1234,6 +1357,7 @@ function renderServerCard(server) {
                 </div>
             </div>
             ${gpuSection}
+            ${containerSection}
         </div>
         <div class="card-footer">
             <span>Updated: ${fmtTime(m.timestamp)}</span>

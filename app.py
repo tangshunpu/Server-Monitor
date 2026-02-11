@@ -204,6 +204,10 @@ def init_db():
         db.execute('ALTER TABLE metrics ADD COLUMN network_global_latency_ms REAL')
     if 'network_global_detail' not in cols:
         db.execute('ALTER TABLE metrics ADD COLUMN network_global_detail TEXT')
+    if 'containers' not in cols:
+        db.execute('ALTER TABLE metrics ADD COLUMN containers TEXT')
+    if 'container_engine' not in cols:
+        db.execute('ALTER TABLE metrics ADD COLUMN container_engine TEXT')
     # servers.admin_status / admin_status_note
     scols = [r[1] for r in db.execute('PRAGMA table_info(servers)').fetchall()]
     if 'admin_status' not in scols:
@@ -1581,8 +1585,9 @@ def api_report():
             gpu_data, network_sent, network_recv,
             network_cn_ok, network_cn_latency_ms, network_cn_detail,
             network_global_ok, network_global_latency_ms, network_global_detail,
+            containers, container_engine,
             errors)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
         (server_id, now,
          data.get('cpu_percent'), data.get('cpu_count'),
          data.get('memory_total'), data.get('memory_used'), data.get('memory_percent'),
@@ -1591,6 +1596,7 @@ def api_report():
          data.get('network_sent'), data.get('network_recv'),
          data.get('network_cn_ok'), data.get('network_cn_latency_ms'), data.get('network_cn_detail'),
          data.get('network_global_ok'), data.get('network_global_latency_ms'), data.get('network_global_detail'),
+         json.dumps(data.get('containers', [])), data.get('container_engine'),
          json.dumps(data.get('errors', [])))
     )
     db.commit()
@@ -1726,6 +1732,17 @@ def _build_server_data(user):
                 for gpu in gpu_data:
                     gpu.pop('processes', None)
 
+            # Containers / 容器列表
+            try:
+                containers_data = json.loads(latest['containers']) if latest['containers'] else []
+            except (json.JSONDecodeError, KeyError):
+                containers_data = []
+            container_engine = None
+            try:
+                container_engine = latest['container_engine']
+            except (KeyError, IndexError):
+                pass
+
             info['metrics'] = {
                 'cpu_percent':    latest['cpu_percent'],
                 'cpu_count':      latest['cpu_count'],
@@ -1736,6 +1753,8 @@ def _build_server_data(user):
                 'disk_used':      latest['disk_used'],
                 'disk_percent':   latest['disk_percent'],
                 'gpu_data':       gpu_data,
+                'containers':     containers_data,
+                'container_engine': container_engine,
                 'network_sent':   latest['network_sent'],
                 'network_recv':   latest['network_recv'],
                 'network_cn_ok':  latest['network_cn_ok'],
