@@ -486,6 +486,65 @@ def _check_zfs_health():
 
 
 # ---------------------------------------------------------------------------
+# Container listing (LXC / Incus) / 容器列表（LXC / Incus）
+# ---------------------------------------------------------------------------
+
+def _list_containers():
+    """List LXC/Incus containers, trying lxc first, then incus if empty.
+    列出 LXC/Incus 容器，优先使用 lxc，若为空则尝试 incus。
+    Returns (containers_list, engine_name_or_None)."""
+
+    def _try_list(cmd_prefix):
+        """Run `<cmd_prefix> list --format json` and parse the result."""
+        try:
+            result = subprocess.run(
+                [cmd_prefix, 'list', '--format', 'json'],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return None  # command failed
+            raw = result.stdout.strip()
+            if not raw or raw == '[]':
+                return []  # empty list
+            data = json.loads(raw)
+            containers = []
+            for ct in data:
+                # Extract IPv4 addresses from network state
+                ipv4_addrs = []
+                net_state = ct.get('state', {}).get('network') or {}
+                for _iface_name, iface in net_state.items():
+                    for addr in iface.get('addresses', []):
+                        if (addr.get('family') == 'inet'
+                                and addr.get('scope') == 'global'):
+                            ipv4_addrs.append(addr.get('address'))
+                containers.append({
+                    'name':   ct.get('name', ''),
+                    'status': ct.get('status', ''),
+                    'type':   ct.get('type', ''),
+                    'ipv4':   ipv4_addrs,
+                })
+            return containers
+        except FileNotFoundError:
+            return None  # command not found
+        except (json.JSONDecodeError, subprocess.TimeoutExpired, Exception) as e:
+            logger.debug(f"{cmd_prefix} list error: {e}")
+            return None
+
+    # 1) Try lxc first / 先尝试 lxc
+    containers = _try_list('lxc')
+    if containers:
+        return containers, 'lxc'
+
+    # 2) If lxc is empty or unavailable, try incus / 若 lxc 为空或不可用，尝试 incus
+    containers = _try_list('incus')
+    if containers:
+        return containers, 'incus'
+
+    # 3) Neither worked or both are empty / 都不可用或都为空
+    return [], None
+
+
+# ---------------------------------------------------------------------------
 # Fault detection / 故障检测
 # ---------------------------------------------------------------------------
 
@@ -538,6 +597,9 @@ def collect_metrics():
     # GPU error detection (temperature etc.) / GPU 错误检测（温度等）
     errors.extend(_detect_gpu_errors(gpu_data))
 
+    # Containers (LXC / Incus) / 容器列表
+    containers, container_engine = _list_containers()
+
     # Operating system / 操作系统
     os_info = f"{platform.system()} {platform.release()}"
 
@@ -558,6 +620,8 @@ def collect_metrics():
         'disk_used':      disk_used,
         'disk_percent':   disk_percent,
         'gpu_data':       gpu_data,
+        'containers':     containers,
+        'container_engine': container_engine,
         'network_sent':   round(net.bytes_sent / (1024 ** 3), 2),
         'network_recv':   round(net.bytes_recv / (1024 ** 3), 2),
         'network_cn_ok':          net_health['network_cn_ok'],
