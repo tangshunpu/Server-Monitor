@@ -505,6 +505,53 @@ def _list_containers():
     列出 LXC/Incus 容器，优先使用 lxc，若为空则尝试 incus。
     Returns (containers_list, engine_name_or_None)."""
 
+    def _collect_container_process_sample(cmd_prefix, container_name, limit=8):
+        """Collect lightweight process sample inside container.
+        采集容器内轻量进程样本。"""
+        if not container_name:
+            return []
+        try:
+            cmd = [
+                cmd_prefix, 'exec', container_name, '--',
+                'sh', '-lc',
+                f'ps -eo pid,comm,%cpu,%mem --sort=-%cpu | head -n {max(2, limit + 1)}'
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True, text=True, timeout=6,
+            )
+            if result.returncode != 0:
+                return []
+            lines = [ln.strip() for ln in (result.stdout or '').splitlines() if ln.strip()]
+            if len(lines) <= 1:
+                return []
+            samples = []
+            for ln in lines[1:]:
+                parts = ln.split(None, 3)
+                if len(parts) < 4:
+                    continue
+                try:
+                    pid = int(parts[0])
+                except ValueError:
+                    continue
+                try:
+                    cpu = float(parts[2])
+                except ValueError:
+                    cpu = None
+                try:
+                    mem = float(parts[3])
+                except ValueError:
+                    mem = None
+                samples.append({
+                    'pid': pid,
+                    'name': parts[1],
+                    'cpu_percent': cpu,
+                    'mem_percent': mem,
+                })
+            return samples
+        except Exception:
+            return []
+
     def _try_list(cmd_prefix):
         """Run `<cmd_prefix> list --format json` and parse the result."""
         try:
@@ -528,11 +575,25 @@ def _list_containers():
                         if (addr.get('family') == 'inet'
                                 and addr.get('scope') == 'global'):
                             ipv4_addrs.append(addr.get('address'))
+                state = ct.get('state', {}) or {}
+                memory = state.get('memory', {}) or {}
+                disk = state.get('disk', {}) or {}
+                root_disk = disk.get('root', {}) if isinstance(disk.get('root', {}), dict) else {}
+                cpu_state = state.get('cpu', {}) or {}
+                ct_name = ct.get('name', '')
+                process_sample = _collect_container_process_sample(cmd_prefix, ct_name)
                 containers.append({
-                    'name':   ct.get('name', ''),
+                    'name':   ct_name,
                     'status': ct.get('status', ''),
                     'type':   ct.get('type', ''),
                     'ipv4':   ipv4_addrs,
+                    'process_count': state.get('processes'),
+                    'memory_usage_bytes': memory.get('usage'),
+                    'memory_total_bytes': memory.get('usage_peak'),
+                    'disk_usage_bytes': root_disk.get('usage'),
+                    'disk_total_bytes': root_disk.get('total'),
+                    'cpu_usage_ns': cpu_state.get('usage'),
+                    'process_sample': process_sample,
                 })
             return containers
         except FileNotFoundError:

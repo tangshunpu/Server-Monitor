@@ -8,6 +8,7 @@ Main server: receives agent data, stores to SQLite, serves the web UI.
 import os
 import json
 import time
+import math
 import hmac
 import hashlib
 import re
@@ -51,6 +52,7 @@ app.permanent_session_lifetime = timedelta(hours=24)
 DATABASE = os.path.join(BASE_DIR, 'monitor.db')
 CONTAINER_GPU_LOOKBACK_HOURS = 24
 CONTAINER_GPU_MAX_ROWS = 2000
+CONTAINER_HISTORY_MAX_ROWS = 4000
 
 # ---------------------------------------------------------------------------
 # Database helpers / 数据库辅助
@@ -920,6 +922,152 @@ def api_server_history(server_id):
             'gpu_data':       gpu_data,
         })
     return jsonify(result)
+
+
+@app.route('/api/servers/<int:server_id>/containers/history')
+@login_required
+def api_server_container_history(server_id):
+    container_name = (request.args.get('name') or '').strip()
+    if not container_name:
+        return jsonify({'error': 'Container name is required'}), 400
+
+    days = request.args.get('days', 30, type=int)
+    if days <= 0:
+        days = 30
+    days = min(days, 30)
+
+    db = get_db()
+    if g.user['role'] != 'admin':
+        if not g.user.get('can_view_containers'):
+            return jsonify({'error': 'Forbidden'}), 403
+        access = db.execute(
+            'SELECT 1 FROM user_server_access WHERE user_id=? AND server_id=?',
+            (g.user['id'], server_id)
+        ).fetchone()
+        if not access:
+            return jsonify({'error': 'Forbidden'}), 403
+
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    total_count = db.execute(
+        '''SELECT COUNT(*) AS c
+           FROM metrics
+           WHERE server_id=? AND timestamp > ?''',
+        (server_id, cutoff)
+    ).fetchone()['c']
+    stride = max(1, int(math.ceil((total_count or 1) / float(CONTAINER_HISTORY_MAX_ROWS))))
+
+    rows = db.execute(
+        '''SELECT id, timestamp, cpu_count, containers
+           FROM metrics
+           WHERE server_id = ? AND timestamp > ?
+             AND (? = 1 OR (id % ?) = 0)
+           ORDER BY timestamp''',
+        (server_id, cutoff, stride, stride)
+    ).fetchall()
+
+    latest = db.execute(
+        '''SELECT id, timestamp, cpu_count, containers
+           FROM metrics
+           WHERE server_id = ? AND timestamp > ?
+           ORDER BY timestamp DESC LIMIT 1''',
+        (server_id, cutoff)
+    ).fetchone()
+    if latest and (not rows or rows[-1]['id'] != latest['id']):
+        rows.append(latest)
+
+    points = []
+    process_samples = []
+    prev = None
+
+    for row in rows:
+        try:
+            containers = json.loads(row['containers']) if row['containers'] else []
+        except json.JSONDecodeError:
+            containers = []
+        target = None
+        for ct in containers:
+            if (ct.get('name') or '') == container_name:
+                target = ct
+                break
+        if not target:
+            prev = None
+            continue
+
+        ts = row['timestamp']
+        memory_usage = _safe_float(target.get('memory_usage_bytes'))
+        disk_usage = _safe_float(target.get('disk_usage_bytes'))
+        process_count = target.get('process_count')
+        try:
+            process_count = int(process_count) if process_count is not None else 0
+        except (TypeError, ValueError):
+            process_count = 0
+
+        cpu_percent = None
+        cpu_usage_ns = _safe_float(target.get('cpu_usage_ns'))
+        if prev and cpu_usage_ns is not None and prev.get('cpu_usage_ns') is not None:
+            try:
+                t1 = datetime.fromisoformat(prev['timestamp'])
+                t2 = datetime.fromisoformat(ts)
+                dt = (t2 - t1).total_seconds()
+                if dt > 0:
+                    cpu_percent = max(0.0, (cpu_usage_ns - prev['cpu_usage_ns']) / (dt * 1e9) * 100.0)
+            except ValueError:
+                cpu_percent = None
+
+        points.append({
+            'timestamp': ts,
+            'cpu_percent': round(cpu_percent, 2) if cpu_percent is not None else None,
+            'memory_gib': round(memory_usage / (1024 ** 3), 3) if memory_usage is not None else None,
+            'disk_gib': round(disk_usage / (1024 ** 3), 3) if disk_usage is not None else None,
+            'process_count': process_count,
+        })
+
+        ps = target.get('process_sample') if isinstance(target.get('process_sample'), list) else []
+        if ps:
+            process_samples.append({
+                'timestamp': ts,
+                'processes': ps[:12],
+            })
+
+        prev = {
+            'timestamp': ts,
+            'cpu_usage_ns': cpu_usage_ns,
+        }
+
+    if len(process_samples) > 300:
+        process_samples = process_samples[-300:]
+
+    def _avg(vals):
+        nums = [v for v in vals if isinstance(v, (int, float))]
+        if not nums:
+            return None
+        return round(sum(nums) / len(nums), 3)
+
+    cpu_vals = [p['cpu_percent'] for p in points if p.get('cpu_percent') is not None]
+    mem_vals = [p['memory_gib'] for p in points if p.get('memory_gib') is not None]
+    disk_vals = [p['disk_gib'] for p in points if p.get('disk_gib') is not None]
+    proc_vals = [p['process_count'] for p in points]
+
+    summary = {
+        'avg_cpu_percent': _avg(cpu_vals),
+        'max_cpu_percent': round(max(cpu_vals), 3) if cpu_vals else None,
+        'avg_memory_gib': _avg(mem_vals),
+        'max_memory_gib': round(max(mem_vals), 3) if mem_vals else None,
+        'avg_disk_gib': _avg(disk_vals),
+        'max_disk_gib': round(max(disk_vals), 3) if disk_vals else None,
+        'avg_process_count': _avg(proc_vals),
+        'max_process_count': max(proc_vals) if proc_vals else None,
+    }
+
+    return jsonify({
+        'server_id': server_id,
+        'container': container_name,
+        'days': days,
+        'sample_stride': stride,
+        'points': points,
+        'process_samples': process_samples,
+        'summary': summary,
+    })
 
 
 @app.route('/api/servers/<int:server_id>', methods=['DELETE'])

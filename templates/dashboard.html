@@ -831,7 +831,9 @@
             display: flex;
             align-items: center;
             gap: 10px;
+            cursor: pointer;
         }
+        .container-item:hover { border-color: rgba(10,132,255,0.35); }
         [data-theme="light"] .container-item { border-color: rgba(80,95,125,0.16); }
 
         .ct-status-dot {
@@ -907,6 +909,74 @@
         }
 
         .container-gpu-empty { font-size: 11px; color: var(--text-muted); }
+
+        .history-modal-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 18px;
+            width: min(1100px, 96vw);
+            max-height: 86vh;
+            overflow: auto;
+        }
+        .history-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .history-title { font-size: 16px; font-weight: 600; }
+        .history-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(170px, 1fr));
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .history-card {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg-inner);
+            padding: 9px 10px;
+        }
+        .history-card-label { font-size: 11px; color: var(--text-muted); }
+        .history-card-value { font-size: 14px; color: var(--text-primary); font-weight: 600; margin-top: 3px; }
+        .history-table-wrap {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg-inner);
+            overflow: auto;
+            margin-bottom: 12px;
+        }
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+        }
+        .history-table th, .history-table td {
+            padding: 7px 9px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            text-align: left;
+        }
+        .history-table th { color: var(--text-muted); position: sticky; top: 0; background: var(--bg-inner); }
+        .history-table td { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+        .history-process-list {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg-inner);
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .history-process-item {
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 8px;
+            padding: 8px;
+        }
+        .history-process-time { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+        .history-process-row { font-size: 11px; color: var(--text-secondary); margin: 2px 0; }
+        .history-empty { font-size: 12px; color: var(--text-muted); padding: 8px 0; }
 
         /* ===== Card Footer ===== */
         .card-footer {
@@ -1010,6 +1080,21 @@
     </div>
 </div>
 
+<div class="modal-overlay" id="containerHistoryModal">
+    <div class="history-modal-box" onclick="event.stopPropagation()">
+        <div class="history-header">
+            <div>
+                <div class="history-title" id="containerHistoryTitle">Container History</div>
+                <div style="font-size:12px;color:var(--text-muted)" id="containerHistoryMeta">Last 30 days</div>
+            </div>
+            <button class="modal-btn cancel" onclick="closeContainerHistoryModal()">Close</button>
+        </div>
+        <div id="containerHistoryBody">
+            <div class="history-empty">Loading...</div>
+        </div>
+    </div>
+</div>
+
 <script>
 // ---------------------------------------------------------------------------
 // Data & State
@@ -1020,6 +1105,7 @@ let refreshInterval = 30;
 let countdown = refreshInterval;
 let deleteServerId = null;
 let detailResizeBound = false;
+let activeContainerHistoryKey = null;
 
 // ---------------------------------------------------------------------------
 // Theme Toggle
@@ -1069,6 +1155,12 @@ function fmt(val, unit) {
 function fmtSize(gb) {
     if (gb === null || gb === undefined) return 'N/A';
     return gb.toFixed(1) + ' GB';
+}
+
+function fmtBytesToGiB(bytes) {
+    const n = Number(bytes);
+    if (!Number.isFinite(n) || n < 0) return 'N/A';
+    return (n / (1024 ** 3)).toFixed(2) + ' GiB';
 }
 
 function fmtDiskTb(gb) {
@@ -1295,7 +1387,7 @@ function selectPrimaryIPv4(ipv4List) {
     return preferred || '';
 }
 
-function renderContainerSection(containers, engine, gpuStats, gpuWindowHours) {
+function renderContainerSection(containers, engine, gpuStats, gpuWindowHours, serverId) {
     const list = Array.isArray(containers) ? containers : [];
     if (list.length === 0 && (!Array.isArray(gpuStats) || gpuStats.length === 0)) return '';
     const statsMap = {};
@@ -1308,16 +1400,19 @@ function renderContainerSection(containers, engine, gpuStats, gpuWindowHours) {
         const st = (ct.status || '').toLowerCase();
         const dotClass = st === 'running' ? 'running' : (st === 'frozen' ? 'frozen' : 'stopped');
         const primaryIp = selectPrimaryIPv4(ct.ipv4);
+        const ctName = ct.name || 'unknown';
+        const ctNameEsc = String(ctName).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         const s = statsMap[ct.name || ''];
         const gpuHours = s ? `${Number(s.gpu_hours || 0).toFixed(2)} GPU·h` : `0.00 GPU·h`;
         const currentGpuCount = s ? Number(s.current_gpu_count || 0) : 0;
         const avgUtil = s ? `${fmt(s.average_utilization, '%')}` : '0%';
         const avgMem = s ? `${fmt(s.average_memory_mib, ' MiB')}` : '0 MiB';
-        return `<div class="container-item">
+        const diskNow = fmtBytesToGiB(ct.disk_usage_bytes);
+        return `<div class="container-item" onclick="event.stopPropagation();openContainerHistory(${serverId}, '${ctNameEsc}')">
             <span class="ct-status-dot ${dotClass}"></span>
             <div class="ct-main">
                 <div class="ct-top">
-                    <span class="ct-name" title="${ct.name || ''}">${ct.name || 'unknown'}</span>
+                    <span class="ct-name" title="${ct.name || ''}">${ctName}</span>
                     <div class="ct-meta">
                         ${primaryIp ? `<span class="ct-ip">${primaryIp}</span>` : '<span class="ct-ip-warning">&#x26A0; No IP</span>'}
                         <span>${ct.status || 'Unknown'}</span>
@@ -1328,6 +1423,7 @@ function renderContainerSection(containers, engine, gpuStats, gpuWindowHours) {
                     <span class="ct-gpu-pill" title="Current occupied GPU count">Now GPU: ${currentGpuCount}</span>
                     <span class="ct-gpu-pill" title="Average GPU utilization in window">Avg Util: ${avgUtil}</span>
                     <span class="ct-gpu-pill" title="Average total VRAM usage in window">Avg VRAM: ${avgMem}</span>
+                    <span class="ct-gpu-pill" title="Current container disk usage">Disk: ${diskNow}</span>
                 </div>
             </div>
         </div>`;
@@ -1378,7 +1474,8 @@ function renderServerCard(server) {
             m.containers,
             m.container_engine,
             m.container_gpu_stats,
-            m.container_gpu_window_hours
+            m.container_gpu_window_hours,
+            s.id
         );
 
         metricsHTML = `
@@ -1620,6 +1717,88 @@ document.getElementById('confirmDeleteBtn').addEventListener('click', () => {
 
 document.getElementById('deleteModal').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeDeleteModal();
+});
+
+function closeContainerHistoryModal() {
+    activeContainerHistoryKey = null;
+    document.getElementById('containerHistoryModal').classList.remove('active');
+}
+
+function renderContainerHistory(data) {
+    const body = document.getElementById('containerHistoryBody');
+    const summary = data.summary || {};
+    const cards = [
+        ['CPU Avg / Max', `${fmt(summary.avg_cpu_percent, '%')} / ${fmt(summary.max_cpu_percent, '%')}`],
+        ['Mem Avg / Max', `${fmt(summary.avg_memory_gib, ' GiB')} / ${fmt(summary.max_memory_gib, ' GiB')}`],
+        ['Disk Avg / Max', `${fmt(summary.avg_disk_gib, ' GiB')} / ${fmt(summary.max_disk_gib, ' GiB')}`],
+        ['Proc Avg / Max', `${fmt(summary.avg_process_count, '')} / ${fmt(summary.max_process_count, '')}`],
+    ].map(([k, v]) => `<div class="history-card">
+        <div class="history-card-label">${k}</div>
+        <div class="history-card-value">${v}</div>
+    </div>`).join('');
+
+    const points = Array.isArray(data.points) ? data.points : [];
+    const showPoints = points.length > 240 ? points.filter((_, idx) => idx % Math.ceil(points.length / 240) === 0) : points;
+    const rows = showPoints.map(p => `<tr>
+        <td>${fmtTime(p.timestamp)}</td>
+        <td>${fmt(p.cpu_percent, '%')}</td>
+        <td>${fmt(p.memory_gib, ' GiB')}</td>
+        <td>${fmt(p.disk_gib, ' GiB')}</td>
+        <td>${fmt(p.process_count, '')}</td>
+    </tr>`).join('');
+    const tableHTML = rows ? `<div class="history-table-wrap"><table class="history-table">
+        <thead><tr><th>Time</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Processes</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table></div>` : `<div class="history-empty">No historical points in selected window.</div>`;
+
+    const processSamples = Array.isArray(data.process_samples) ? data.process_samples : [];
+    const processHTML = processSamples.length ? processSamples.slice(-50).reverse().map(s => {
+        const prows = (s.processes || []).slice(0, 8).map(p =>
+            `<div class="history-process-row">PID ${p.pid} · ${p.name || 'unknown'} · CPU ${fmt(p.cpu_percent, '%')} · MEM ${fmt(p.mem_percent, '%')}</div>`
+        ).join('');
+        return `<div class="history-process-item">
+            <div class="history-process-time">${fmtTime(s.timestamp)}</div>
+            ${prows || '<div class="history-empty">No process sample</div>'}
+        </div>`;
+    }).join('') : '<div class="history-empty">No process samples available.</div>';
+
+    body.innerHTML = `
+        <div class="history-grid">${cards}</div>
+        ${tableHTML}
+        <div class="history-process-list">${processHTML}</div>
+    `;
+}
+
+function openContainerHistory(serverId, containerName) {
+    const modal = document.getElementById('containerHistoryModal');
+    const titleEl = document.getElementById('containerHistoryTitle');
+    const metaEl = document.getElementById('containerHistoryMeta');
+    const bodyEl = document.getElementById('containerHistoryBody');
+    const key = `${serverId}:${containerName}`;
+    activeContainerHistoryKey = key;
+    titleEl.textContent = `Container: ${containerName}`;
+    metaEl.textContent = `Server #${serverId} · Last 30 days`;
+    bodyEl.innerHTML = '<div class="history-empty">Loading...</div>';
+    modal.classList.add('active');
+
+    fetch(`/api/servers/${serverId}/containers/history?name=${encodeURIComponent(containerName)}&days=30`)
+        .then(r => r.json().then(data => ({ok: r.ok, data})))
+        .then(({ok, data}) => {
+            if (activeContainerHistoryKey !== key) return;
+            if (!ok) {
+                bodyEl.innerHTML = `<div class="history-empty">${(data && data.error) ? data.error : 'Failed to load history'}</div>`;
+                return;
+            }
+            renderContainerHistory(data);
+        })
+        .catch(() => {
+            if (activeContainerHistoryKey !== key) return;
+            bodyEl.innerHTML = '<div class="history-empty">Failed to load history.</div>';
+        });
+}
+
+document.getElementById('containerHistoryModal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeContainerHistoryModal();
 });
 
 // ---------------------------------------------------------------------------
