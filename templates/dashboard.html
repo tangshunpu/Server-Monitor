@@ -960,22 +960,6 @@
         }
         .history-table th { color: var(--text-muted); position: sticky; top: 0; background: var(--bg-inner); }
         .history-table td { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-        .history-process-list {
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            background: var(--bg-inner);
-            padding: 10px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-        .history-process-item {
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 8px;
-            padding: 8px;
-        }
-        .history-process-time { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
-        .history-process-row { font-size: 11px; color: var(--text-secondary); margin: 2px 0; }
         .history-empty { font-size: 12px; color: var(--text-muted); padding: 8px 0; }
 
         /* ===== Card Footer ===== */
@@ -1731,7 +1715,9 @@ function renderContainerHistory(data) {
         ['CPU Avg / Max', `${fmt(summary.avg_cpu_percent, '%')} / ${fmt(summary.max_cpu_percent, '%')}`],
         ['Mem Avg / Max', `${fmt(summary.avg_memory_gib, ' GiB')} / ${fmt(summary.max_memory_gib, ' GiB')}`],
         ['Disk Avg / Max', `${fmt(summary.avg_disk_gib, ' GiB')} / ${fmt(summary.max_disk_gib, ' GiB')}`],
-        ['Proc Avg / Max', `${fmt(summary.avg_process_count, '')} / ${fmt(summary.max_process_count, '')}`],
+        ['GPU Avg / Max', `${fmt(summary.avg_gpu_count, '')} / ${fmt(summary.max_gpu_count, '')}`],
+        ['GPU Util Avg / Max', `${fmt(summary.avg_gpu_util_percent, '%')} / ${fmt(summary.max_gpu_util_percent, '%')}`],
+        ['GPU VRAM Avg / Max', `${fmt(summary.avg_gpu_memory_mib, ' MiB')} / ${fmt(summary.max_gpu_memory_mib, ' MiB')}`],
     ].map(([k, v]) => `<div class="history-card">
         <div class="history-card-label">${k}</div>
         <div class="history-card-value">${v}</div>
@@ -1744,28 +1730,18 @@ function renderContainerHistory(data) {
         <td>${fmt(p.cpu_percent, '%')}</td>
         <td>${fmt(p.memory_gib, ' GiB')}</td>
         <td>${fmt(p.disk_gib, ' GiB')}</td>
-        <td>${fmt(p.process_count, '')}</td>
+        <td>${fmt(p.gpu_count, '')}</td>
+        <td>${fmt(p.gpu_util_percent, '%')}</td>
+        <td>${fmt(p.gpu_memory_mib, ' MiB')}</td>
     </tr>`).join('');
     const tableHTML = rows ? `<div class="history-table-wrap"><table class="history-table">
-        <thead><tr><th>Time</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Processes</th></tr></thead>
+        <thead><tr><th>Time</th><th>CPU</th><th>Memory</th><th>Disk</th><th>GPU Count</th><th>GPU Util</th><th>GPU VRAM</th></tr></thead>
         <tbody>${rows}</tbody>
     </table></div>` : `<div class="history-empty">No historical points in selected window.</div>`;
-
-    const processSamples = Array.isArray(data.process_samples) ? data.process_samples : [];
-    const processHTML = processSamples.length ? processSamples.slice(-50).reverse().map(s => {
-        const prows = (s.processes || []).slice(0, 8).map(p =>
-            `<div class="history-process-row">PID ${p.pid} · ${p.name || 'unknown'} · CPU ${fmt(p.cpu_percent, '%')} · MEM ${fmt(p.mem_percent, '%')}</div>`
-        ).join('');
-        return `<div class="history-process-item">
-            <div class="history-process-time">${fmtTime(s.timestamp)}</div>
-            ${prows || '<div class="history-empty">No process sample</div>'}
-        </div>`;
-    }).join('') : '<div class="history-empty">No process samples available.</div>';
 
     body.innerHTML = `
         <div class="history-grid">${cards}</div>
         ${tableHTML}
-        <div class="history-process-list">${processHTML}</div>
     `;
 }
 

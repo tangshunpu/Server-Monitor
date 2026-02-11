@@ -957,7 +957,7 @@ def api_server_container_history(server_id):
     stride = max(1, int(math.ceil((total_count or 1) / float(CONTAINER_HISTORY_MAX_ROWS))))
 
     rows = db.execute(
-        '''SELECT id, timestamp, cpu_count, containers
+        '''SELECT id, timestamp, cpu_count, containers, gpu_data
            FROM metrics
            WHERE server_id = ? AND timestamp > ?
              AND (? = 1 OR (id % ?) = 0)
@@ -966,7 +966,7 @@ def api_server_container_history(server_id):
     ).fetchall()
 
     latest = db.execute(
-        '''SELECT id, timestamp, cpu_count, containers
+        '''SELECT id, timestamp, cpu_count, containers, gpu_data
            FROM metrics
            WHERE server_id = ? AND timestamp > ?
            ORDER BY timestamp DESC LIMIT 1''',
@@ -976,7 +976,6 @@ def api_server_container_history(server_id):
         rows.append(latest)
 
     points = []
-    process_samples = []
     prev = None
 
     for row in rows:
@@ -996,11 +995,24 @@ def api_server_container_history(server_id):
         ts = row['timestamp']
         memory_usage = _safe_float(target.get('memory_usage_bytes'))
         disk_usage = _safe_float(target.get('disk_usage_bytes'))
-        process_count = target.get('process_count')
+        gpu_count = 0
+        gpu_util_percent = None
+        gpu_memory_mib = 0.0
         try:
-            process_count = int(process_count) if process_count is not None else 0
-        except (TypeError, ValueError):
-            process_count = 0
+            gpu_data = json.loads(row['gpu_data']) if row['gpu_data'] else []
+        except json.JSONDecodeError:
+            gpu_data = []
+        snap = _snapshot_container_gpu_usage(gpu_data)
+        g = snap.get(container_name, {})
+        if g:
+            try:
+                gpu_count = int(g.get('gpu_count') or 0)
+            except (TypeError, ValueError):
+                gpu_count = 0
+            util_sum = _safe_float(g.get('gpu_util_sum'))
+            if util_sum is not None and gpu_count > 0:
+                gpu_util_percent = util_sum / gpu_count
+            gpu_memory_mib = _safe_float(g.get('memory_mib')) or 0.0
 
         cpu_percent = None
         cpu_usage_ns = _safe_float(target.get('cpu_usage_ns'))
@@ -1019,23 +1031,15 @@ def api_server_container_history(server_id):
             'cpu_percent': round(cpu_percent, 2) if cpu_percent is not None else None,
             'memory_gib': round(memory_usage / (1024 ** 3), 3) if memory_usage is not None else None,
             'disk_gib': round(disk_usage / (1024 ** 3), 3) if disk_usage is not None else None,
-            'process_count': process_count,
+            'gpu_count': gpu_count,
+            'gpu_util_percent': round(gpu_util_percent, 2) if gpu_util_percent is not None else None,
+            'gpu_memory_mib': round(gpu_memory_mib, 2),
         })
-
-        ps = target.get('process_sample') if isinstance(target.get('process_sample'), list) else []
-        if ps:
-            process_samples.append({
-                'timestamp': ts,
-                'processes': ps[:12],
-            })
 
         prev = {
             'timestamp': ts,
             'cpu_usage_ns': cpu_usage_ns,
         }
-
-    if len(process_samples) > 300:
-        process_samples = process_samples[-300:]
 
     def _avg(vals):
         nums = [v for v in vals if isinstance(v, (int, float))]
@@ -1046,7 +1050,9 @@ def api_server_container_history(server_id):
     cpu_vals = [p['cpu_percent'] for p in points if p.get('cpu_percent') is not None]
     mem_vals = [p['memory_gib'] for p in points if p.get('memory_gib') is not None]
     disk_vals = [p['disk_gib'] for p in points if p.get('disk_gib') is not None]
-    proc_vals = [p['process_count'] for p in points]
+    gpu_count_vals = [p['gpu_count'] for p in points]
+    gpu_util_vals = [p['gpu_util_percent'] for p in points if p.get('gpu_util_percent') is not None]
+    gpu_mem_vals = [p['gpu_memory_mib'] for p in points if p.get('gpu_memory_mib') is not None]
 
     summary = {
         'avg_cpu_percent': _avg(cpu_vals),
@@ -1055,8 +1061,12 @@ def api_server_container_history(server_id):
         'max_memory_gib': round(max(mem_vals), 3) if mem_vals else None,
         'avg_disk_gib': _avg(disk_vals),
         'max_disk_gib': round(max(disk_vals), 3) if disk_vals else None,
-        'avg_process_count': _avg(proc_vals),
-        'max_process_count': max(proc_vals) if proc_vals else None,
+        'avg_gpu_count': _avg(gpu_count_vals),
+        'max_gpu_count': max(gpu_count_vals) if gpu_count_vals else None,
+        'avg_gpu_util_percent': _avg(gpu_util_vals),
+        'max_gpu_util_percent': round(max(gpu_util_vals), 3) if gpu_util_vals else None,
+        'avg_gpu_memory_mib': _avg(gpu_mem_vals),
+        'max_gpu_memory_mib': round(max(gpu_mem_vals), 3) if gpu_mem_vals else None,
     }
 
     return jsonify({
@@ -1065,7 +1075,6 @@ def api_server_container_history(server_id):
         'days': days,
         'sample_stride': stride,
         'points': points,
-        'process_samples': process_samples,
         'summary': summary,
     })
 
