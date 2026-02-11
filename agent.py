@@ -32,7 +32,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S',
 )
 logger = logging.getLogger(__name__)
-AGENT_VERSION = 'beta1.0'
+AGENT_VERSION = 'beta1.1'
 GLOBAL_HTTP_PROXY = None
 NETWORK_HEALTH_LOCK = threading.Lock()
 NETWORK_HEALTH_CACHE = {
