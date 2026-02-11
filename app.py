@@ -87,6 +87,7 @@ def init_db():
         display_name TEXT DEFAULT '',
         ip          TEXT,
         os_info     TEXT,
+        agent_version TEXT DEFAULT '',
         last_seen   TIMESTAMP,
         status      TEXT DEFAULT 'offline'
     )''')
@@ -224,6 +225,8 @@ def init_db():
         db.execute("ALTER TABLE servers ADD COLUMN display_name TEXT DEFAULT ''")
     if 'mac_address' not in scols:
         db.execute("ALTER TABLE servers ADD COLUMN mac_address TEXT")
+    if 'agent_version' not in scols:
+        db.execute("ALTER TABLE servers ADD COLUMN agent_version TEXT DEFAULT ''")
     db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_servers_mac_address '
                'ON servers(mac_address) WHERE mac_address IS NOT NULL AND mac_address != ""')
     db.execute('CREATE INDEX IF NOT EXISTS idx_servers_hostname ON servers(hostname)')
@@ -306,16 +309,18 @@ def _migrate_servers_table_for_mac_identity(db):
         display_name     TEXT DEFAULT '',
         ip               TEXT,
         os_info          TEXT,
+        agent_version    TEXT DEFAULT '',
         last_seen        TIMESTAMP,
         status           TEXT DEFAULT 'offline',
         admin_status     TEXT DEFAULT 'normal',
         admin_status_note TEXT DEFAULT ''
     )''')
     db.execute('''INSERT INTO servers_new
-                  (id, hostname, ip, os_info, last_seen, status, admin_status, admin_status_note, display_name)
+                  (id, hostname, ip, os_info, last_seen, status, admin_status, admin_status_note, display_name, agent_version)
                   SELECT id, hostname, ip, os_info, last_seen, status,
                          COALESCE(admin_status, 'normal'),
                          COALESCE(admin_status_note, ''),
+                         '',
                          ''
                   FROM servers''')
     db.execute('DROP TABLE servers')
@@ -1864,6 +1869,7 @@ def api_report():
     now = datetime.now().isoformat()
     hostname = str(data.get('hostname', '')).strip() or 'unknown'
     mac_address = _normalize_mac_address(data.get('mac_address'))
+    agent_version = str(data.get('agent_version', '')).strip()[:64]
 
     # Upsert server / 更新或插入服务器记录（优先按 MAC）
     server = None
@@ -1907,13 +1913,13 @@ def api_report():
                     'error': 'Hostname already exists and is not assigned to this user'
                 }), 403
         db.execute(
-            'UPDATE servers SET hostname=?, mac_address=COALESCE(mac_address, ?), ip=?, os_info=?, last_seen=?, status=? WHERE id=?',
-            (hostname, mac_address, data.get('ip'), data.get('os_info'), now, 'online', server_id)
+            'UPDATE servers SET hostname=?, mac_address=COALESCE(mac_address, ?), ip=?, os_info=?, agent_version=?, last_seen=?, status=? WHERE id=?',
+            (hostname, mac_address, data.get('ip'), data.get('os_info'), agent_version, now, 'online', server_id)
         )
     else:
         cursor = db.execute(
-            'INSERT INTO servers (hostname, mac_address, ip, os_info, last_seen, status) VALUES (?,?,?,?,?,?)',
-            (hostname, mac_address, data.get('ip'), data.get('os_info'), now, 'online')
+            'INSERT INTO servers (hostname, mac_address, ip, os_info, agent_version, last_seen, status) VALUES (?,?,?,?,?,?,?)',
+            (hostname, mac_address, data.get('ip'), data.get('os_info'), agent_version, now, 'online')
         )
         server_id = cursor.lastrowid
         if report_user_id is not None:
@@ -2043,6 +2049,7 @@ def _build_server_data(user):
             'mac_address':       s['mac_address'] if 'mac_address' in s.keys() else None,
             'ip':                s['ip'],
             'os_info':           s['os_info'],
+            'agent_version':     s['agent_version'] if 'agent_version' in s.keys() else '',
             'status':            effective_status,
             'admin_status':      admin_status,
             'admin_status_note': admin_note,

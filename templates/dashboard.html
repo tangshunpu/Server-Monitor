@@ -243,6 +243,18 @@
             overflow: hidden;
             text-overflow: ellipsis;
         }
+        .ov-version-badge {
+            display: inline-flex;
+            margin-left: 6px;
+            padding: 1px 8px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--blue);
+            background: rgba(10,132,255,0.14);
+            border: 1px solid rgba(10,132,255,0.32);
+            vertical-align: middle;
+        }
 
         .ov-gpu-summary {
             font-size: 12px;
@@ -1204,7 +1216,7 @@ function renderOverview(data) {
     const el = document.getElementById('overview');
     if (!data || data.length === 0) { el.innerHTML = ''; return; }
 
-    const cards = data.map(s => {
+        const cards = data.map(s => {
         const m = s.metrics;
         const st = s.status; // online, offline, warning, maintenance, fault
         const gpu = m ? getGpuSummary(m.gpu_data, st) : { label: '-', available: 0, total: 0, hasNvidia: false };
@@ -1227,11 +1239,12 @@ function renderOverview(data) {
         const ctSummary = ctList.length > 0
             ? `<span style="font-size:11px;color:var(--text-muted);margin-left:4px">&#x1F4E6; ${ctRunning}/${ctList.length}</span>`
             : '';
+        const versionBadge = s.agent_version ? `<span class="ov-version-badge">${s.agent_version}</span>` : '';
 
         return `<div class="overview-card status-${st}" onclick="focusDetailServer(${s.id})">
             <span class="ov-dot ${st}"></span>
             <div class="ov-info">
-                <div class="ov-hostname">${s.hostname} ${statusLabel}</div>
+                <div class="ov-hostname">${s.hostname} ${statusLabel}${versionBadge}</div>
                 <div class="ov-gpu-summary">${gpu.label}${vendorBadge}${ctSummary}</div>
                 ${noteHTML}
                 <div class="ov-stats">

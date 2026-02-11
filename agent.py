@@ -32,6 +32,7 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S',
 )
 logger = logging.getLogger(__name__)
+AGENT_VERSION = 'beta1.0'
 GLOBAL_HTTP_PROXY = None
 NETWORK_HEALTH_LOCK = threading.Lock()
 NETWORK_HEALTH_CACHE = {
@@ -632,6 +633,7 @@ def collect_metrics():
     return {
         'hostname':       socket.gethostname(),
         'mac_address':    _get_primary_mac(),
+        'agent_version':  AGENT_VERSION,
         'ip':             ip,
         'os_info':        os_info,
         'cpu_percent':    cpu_percent,
